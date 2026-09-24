@@ -51,6 +51,11 @@ class MCPDispatcher(http.Dispatcher):
         core's per-route ``max_content_length`` cap (``@mcp_route`` sets a small
         default) so an oversized body is refused before it is buffered/parsed.
         """
+        # Allow client to explicitly select the database via header (fixes multi-DB Nginx rejection)
+        odoo_db = self.request.httprequest.headers.get("X-Odoo-DB")
+        if odoo_db:
+            self.request.session.db = odoo_db
+
         routing = rule.endpoint.routing
         self.request.session.can_save &= routing.get("save_session", True)
 
@@ -139,7 +144,7 @@ class MCPDispatcher(http.Dispatcher):
                 # client's preflight fail and blocks the real POST.
                 # Mcp-Session-Id is allowed too as harmless future-proofing.
                 "Origin, X-Requested-With, Content-Type, Accept, Authorization, "
-                "Range, MCP-Protocol-Version, Mcp-Session-Id",
+                "Range, MCP-Protocol-Version, Mcp-Session-Id, X-Odoo-DB",
             )
             werkzeug.exceptions.abort(Response(status=204))
 
