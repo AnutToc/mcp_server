@@ -55,6 +55,7 @@ class MCPDispatcher(http.Dispatcher):
         odoo_db = self.request.httprequest.headers.get("X-Odoo-DB")
         if odoo_db:
             self.request.session.db = odoo_db
+            self.request._db = odoo_db
 
         routing = rule.endpoint.routing
         self.request.session.can_save &= routing.get("save_session", True)
