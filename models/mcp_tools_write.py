@@ -27,6 +27,7 @@ import logging
 from odoo import _, api, models
 from odoo.exceptions import AccessError, MissingError, UserError
 
+from ..compat import zip_strict
 from ..controllers import utils
 from ..controllers.mcp_route import MCP_MAX_CONTENT_LENGTH
 from ..tools.uri_schema import build_attachment_uri
@@ -163,11 +164,7 @@ def _json_safe(value, max_records=MAX_LIMIT):
             out = list(capped.ids)
         if len(value) > max_records:
             out.append(
-                _(
-                    "... [truncated: %(shown)d of %(total)d records shown]",
-                    shown=max_records,
-                    total=len(value),
-                )
+                _("... [truncated: %(shown)d of %(total)d records shown]") % {'shown': max_records, 'total': len(value)}
             )
         return out
     if isinstance(value, dict):
@@ -202,7 +199,7 @@ class McpToolsWrite(models.AbstractModel):
         )
         if not base_url:
             return ""
-        return f"{base_url}/odoo/{model}/{record_id}"
+        return f"{base_url}/web#id={record_id}&model={model}&view_type=form"
 
     @staticmethod
     def _format_write_text(message, record, url):
@@ -210,9 +207,9 @@ class McpToolsWrite(models.AbstractModel):
         lines = [message]
         display_name = record.get("display_name")
         if display_name:
-            lines.append(_("Name: %s", display_name))
+            lines.append(_("Name: %s") % (display_name,))
         if url:
-            lines.append(_("URL: %s", url))
+            lines.append(_("URL: %s") % (url,))
         return "\n".join(lines)
 
     def _max_batch_size(self):
@@ -246,12 +243,8 @@ class McpToolsWrite(models.AbstractModel):
         # unbounded result serialization.
         if len(record_ids) > cap:
             raise UserError(
-                _(
-                    "Too many record_ids: %(count)s (max %(max)s). Split the "
-                    "batch into smaller calls.",
-                    count=len(record_ids),
-                    max=cap,
-                )
+                _("Too many record_ids: %(count)s (max %(max)s). Split the "
+                    "batch into smaller calls.") % {'count': len(record_ids), 'max': cap}
             )
         if deduplicate:
             record_ids = list(dict.fromkeys(record_ids))
@@ -264,11 +257,7 @@ class McpToolsWrite(models.AbstractModel):
         missing = [rid for rid in record_ids if rid not in existing]
         if missing:
             raise MissingError(
-                _(
-                    "Records not found: %(model)s with IDs %(ids)s",
-                    model=model,
-                    ids=missing,
-                )
+                _("Records not found: %(model)s with IDs %(ids)s") % {'model': model, 'ids': missing}
             )
         return target
 
@@ -288,7 +277,7 @@ class McpToolsWrite(models.AbstractModel):
         rows = []
         lines = [message]
         for data in records.read(_ESSENTIAL_FIELDS):
-            url = f"{base_url}/odoo/{model}/{data['id']}" if base_url else ""
+            url = f"{base_url}/web#id={data['id']}&model={model}&view_type=form" if base_url else ""
             rows.append(
                 {"id": data["id"], "display_name": data["display_name"], "url": url}
             )
@@ -349,11 +338,7 @@ class McpToolsWrite(models.AbstractModel):
         # Runs as the calling user -> ORM enforces create ACLs, record rules
         # and required-field validation.
         record = model_rs.create(values)
-        message = _(
-            "Successfully created %(model)s record with ID %(id)s",
-            model=model,
-            id=record.id,
-        )
+        message = _("Successfully created %(model)s record with ID %(id)s") % {'model': model, 'id': record.id}
         return self._write_confirmation(model, record, message)
 
     # ------------------------------------------------------------------
@@ -408,32 +393,21 @@ class McpToolsWrite(models.AbstractModel):
         max_entries = self._max_batch_size()
         if len(records) > max_entries:
             raise UserError(
-                _(
-                    "Too many records: %(count)s (max %(max)s). Split the batch "
-                    "into smaller calls.",
-                    count=len(records),
-                    max=max_entries,
-                )
+                _("Too many records: %(count)s (max %(max)s). Split the batch "
+                    "into smaller calls.") % {'count': len(records), 'max': max_entries}
             )
         for index, entry in enumerate(records):
             if not isinstance(entry, dict) or not entry:
                 raise UserError(
-                    _(
-                        "Entry %(index)s of 'records' must be a non-empty "
-                        "field->value object.",
-                        index=index,
-                    )
+                    _("Entry %(index)s of 'records' must be a non-empty "
+                        "field->value object.") % {'index': index}
                 )
 
         # One ORM call (batched defaults/computes); runs as the calling user ->
         # ORM enforces create ACLs, record rules and required-field validation.
         # Any failure rolls the whole batch back via the dispatcher savepoint.
         created = model_rs.create(records)
-        message = _(
-            "Successfully created %(count)s %(model)s records",
-            count=len(created),
-            model=model,
-        )
+        message = _("Successfully created %(count)s %(model)s records") % {'count': len(created), 'model': model}
         return self._batch_write_confirmation(model, created, message)
 
     # ------------------------------------------------------------------
@@ -488,11 +462,7 @@ class McpToolsWrite(models.AbstractModel):
 
         # Runs as the calling user -> ORM enforces write ACLs / record rules.
         record.write(values)
-        message = _(
-            "Successfully updated %(model)s record with ID %(id)s",
-            model=model,
-            id=record.id,
-        )
+        message = _("Successfully updated %(model)s record with ID %(id)s") % {'model': model, 'id': record.id}
         return self._write_confirmation(model, record, message)
 
     # ------------------------------------------------------------------
@@ -586,11 +556,7 @@ class McpToolsWrite(models.AbstractModel):
                 )
             )
 
-        message = _(
-            "Successfully updated %(count)s %(model)s records",
-            count=len(records),
-            model=model,
-        )
+        message = _("Successfully updated %(count)s %(model)s records") % {'count': len(records), 'model': model}
         return self._batch_write_confirmation(model, records, message)
 
     def _update_records_shared(self, model, model_rs, record_ids, values):
@@ -630,11 +596,8 @@ class McpToolsWrite(models.AbstractModel):
             )
             if bad:
                 raise UserError(
-                    _(
-                        "Entry %(index)s of 'updates' must be an object with "
-                        "'id' and a non-empty 'values'.",
-                        index=index,
-                    )
+                    _("Entry %(index)s of 'updates' must be an object with "
+                        "'id' and a non-empty 'values'.") % {'index': index}
                 )
             ids.append(entry["id"])
             values_list.append(entry["values"])
@@ -650,15 +613,12 @@ class McpToolsWrite(models.AbstractModel):
             seen.add(rid)
         if duplicates:
             raise UserError(
-                _(
-                    "Duplicate ids in 'updates': %(ids)s. List each record once.",
-                    ids=duplicates,
-                )
+                _("Duplicate ids in 'updates': %(ids)s. List each record once.") % {'ids': duplicates}
             )
 
         # Runs as the calling user -> ORM enforces write ACLs / record rules.
         # Any failure rolls the whole batch back via the dispatcher savepoint.
-        for record, vals in zip(records, values_list, strict=True):
+        for record, vals in zip_strict(records, values_list):
             record.write(vals)
         return records
 
@@ -722,17 +682,12 @@ class McpToolsWrite(models.AbstractModel):
         # Capture identity before unlink; display_name may be False for models
         # without a meaningful name (e.g. mail.message).
         deleted_id = record.id
-        deleted_name = record.display_name or _("ID %s", deleted_id)
+        deleted_name = record.display_name or _("ID %s") % (deleted_id,)
 
         # Runs as the calling user -> ORM enforces unlink ACLs / record rules.
         record.unlink()
 
-        message = _(
-            "Successfully deleted %(model)s record '%(name)s' (ID: %(id)s)",
-            model=model,
-            name=deleted_name,
-            id=deleted_id,
-        )
+        message = _("Successfully deleted %(model)s record '%(name)s' (ID: %(id)s)") % {'model': model, 'name': deleted_name, 'id': deleted_id}
         structured = {
             "success": True,
             "deleted_id": deleted_id,
@@ -754,7 +709,7 @@ class McpToolsWrite(models.AbstractModel):
         """
         # Refuse private methods (covers dunders too -- all start with '_').
         if method.startswith("_"):
-            raise UserError(_("Private methods cannot be called via MCP: %s", method))
+            raise UserError(_("Private methods cannot be called via MCP: %s") % (method,))
 
         # Refuse method calls on the self-elevating action/cron models outright
         # (ir.actions.server.run runs server-action code as superuser; ir.cron
@@ -766,11 +721,8 @@ class McpToolsWrite(models.AbstractModel):
             for blocked in _METHOD_CALL_BLOCKED_MODELS
         ):
             raise AccessError(
-                _(
-                    "Method calls on '%s' are not permitted via MCP: its methods "
-                    "run with elevated privileges.",
-                    model,
-                )
+                _("Method calls on '%s' are not permitted via MCP: its methods "
+                    "run with elevated privileges.") % (model,)
             )
 
         # Refuse the public ``web_*`` family (web_save / web_read / web_search_read
@@ -780,11 +732,8 @@ class McpToolsWrite(models.AbstractModel):
         # additions too.
         if method.startswith("web_"):
             raise AccessError(
-                _(
-                    "Method '%s' is a data-access method; use the dedicated CRUD "
-                    "tools. call_model_method is for business methods.",
-                    method,
-                )
+                _("Method '%s' is a data-access method; use the dedicated CRUD "
+                    "tools. call_model_method is for business methods.") % (method,)
             )
 
         # Hard-blocked ORM CRUD / data-access methods -- see
@@ -792,11 +741,8 @@ class McpToolsWrite(models.AbstractModel):
         # ``allow_method_calls`` on.
         if method in _BLOCKED_METHOD_CALLS:
             raise AccessError(
-                _(
-                    "Method '%s' is a data-access method; use the dedicated CRUD "
-                    "tools. call_model_method is for business methods.",
-                    method,
-                )
+                _("Method '%s' is a data-access method; use the dedicated CRUD "
+                    "tools. call_model_method is for business methods.") % (method,)
             )
 
         # Two-tier boundary so ``allow_method_calls`` permits a model's OWN public
@@ -820,13 +766,8 @@ class McpToolsWrite(models.AbstractModel):
         if mapped_op:
             if not utils.check_model_operation_allowed(self.env, model, mapped_op):
                 raise AccessError(
-                    _(
-                        "Method '%(method)s' maps to the '%(op)s' operation, which "
-                        "is not enabled for model '%(model)s' via MCP.",
-                        method=method,
-                        op=mapped_op,
-                        model=model,
-                    )
+                    _("Method '%(method)s' maps to the '%(op)s' operation, which "
+                        "is not enabled for model '%(model)s' via MCP.") % {'method': method, 'op': mapped_op, 'model': model}
                 )
         elif hasattr(models.BaseModel, method) or hasattr(self.env["base"], method):
             # ``self.env["base"]`` also catches generic API that addons contribute
@@ -836,23 +777,16 @@ class McpToolsWrite(models.AbstractModel):
             # data access (get_views leaks field/view metadata like fields_get),
             # never per-model business methods.
             raise AccessError(
-                _(
-                    "Method '%s' is part of the generic ORM API, not a model "
+                _("Method '%s' is part of the generic ORM API, not a model "
                     "business method; use the dedicated create/update/delete/search "
-                    "tools. call_model_method is for business methods.",
-                    method,
-                )
+                    "tools. call_model_method is for business methods.") % (method,)
             )
 
         # The attribute must be a real callable method, not a field/property.
         attr = getattr(model_rs, method, None)
         if attr is None or not callable(attr):
             raise UserError(
-                _(
-                    "'%(method)s' is not a callable method on model '%(model)s'.",
-                    method=method,
-                    model=model,
-                )
+                _("'%(method)s' is not a callable method on model '%(model)s'.") % {'method': method, 'model': model}
             )
 
     @mcp_tool(
@@ -915,7 +849,7 @@ class McpToolsWrite(models.AbstractModel):
         # Per-model opt-in gate: enabled AND allow_method_calls=True.
         if not utils.check_model_method_allowed(self.env, model):
             raise AccessError(
-                _("Method calls are not enabled for model '%s' via MCP.", model)
+                _("Method calls are not enabled for model '%s' via MCP.") % (model,)
             )
 
         if not isinstance(method, str) or not method.strip():
@@ -955,17 +889,13 @@ class McpToolsWrite(models.AbstractModel):
         raw = getattr(target, method)(*args, **kwargs)
         result = _json_safe(raw)
 
-        message = _(
-            "Successfully called %(model)s.%(method)s",
-            model=model,
-            method=method,
-        )
+        message = _("Successfully called %(model)s.%(method)s") % {'model': model, 'method': method}
         structured = {"success": True, "result": result, "message": message}
         try:
             rendered = json.dumps(result, ensure_ascii=False, default=str)
         except (TypeError, ValueError):
             rendered = str(result)
-        text = "%s\n%s" % (message, _("Result: %s", rendered))
+        text = "%s\n%s" % (message, _("Result: %s") % (rendered,))
         return _tool_result(text, structured)
 
     # ------------------------------------------------------------------
@@ -1049,11 +979,7 @@ class McpToolsWrite(models.AbstractModel):
             raise UserError(_("'data' is not valid base64.")) from err
         if len(raw) > MAX_UPLOAD_BYTES:
             raise UserError(
-                _(
-                    "File is %(size)s bytes, above the %(cap)s-byte upload " "limit.",
-                    size=len(raw),
-                    cap=MAX_UPLOAD_BYTES,
-                )
+                _("File is %(size)s bytes, above the %(cap)s-byte upload " "limit.") % {'size': len(raw), 'cap': MAX_UPLOAD_BYTES}
             )
 
         values = {"name": name.strip(), "raw": raw, "type": "binary"}
@@ -1078,16 +1004,10 @@ class McpToolsWrite(models.AbstractModel):
         # (write access on the parent record for a linked upload).
         attachment = self.env["ir.attachment"].create(values)
         uri = build_attachment_uri(attachment.id)
-        confirmation = _(
-            "Uploaded attachment %(id)s (%(name)s, %(mimetype)s, %(size)s bytes)",
-            id=attachment.id,
-            name=attachment.name,
-            mimetype=attachment.mimetype,
-            size=attachment.file_size,
-        )
-        lines = [confirmation, _("URI: %s", uri)]
+        confirmation = _("Uploaded attachment %(id)s (%(name)s, %(mimetype)s, %(size)s bytes)") % {'id': attachment.id, 'name': attachment.name, 'mimetype': attachment.mimetype, 'size': attachment.file_size}
+        lines = [confirmation, _("URI: %s") % (uri,)]
         if model is not None:
-            lines.append(_("Attached to %(model)s/%(id)s", model=model, id=record.id))
+            lines.append(_("Attached to %(model)s/%(id)s") % {'model': model, 'id': record.id})
         structured = {
             "attachment_id": attachment.id,
             "uri": uri,
@@ -1193,11 +1113,8 @@ class McpToolsWrite(models.AbstractModel):
         # Clean error (not a traceback) when the model has no chatter.
         if not hasattr(model_rs, "message_post"):
             raise UserError(
-                _(
-                    "Model '%s' does not support chatter "
-                    "(no mail.thread inheritance).",
-                    model,
-                )
+                _("Model '%s' does not support chatter "
+                    "(no mail.thread inheritance).") % (model,)
             )
 
         record = self._browse_record_or_raise(model, model_rs, record_id)
@@ -1205,7 +1122,7 @@ class McpToolsWrite(models.AbstractModel):
         subtype = (subtype or "note").strip().lower()
         if subtype not in _SUBTYPE_XMLID:
             raise UserError(
-                _("Invalid subtype '%s'; expected 'note' or 'comment'.", subtype)
+                _("Invalid subtype '%s'; expected 'note' or 'comment'.") % (subtype,)
             )
 
         # Omit partner_ids/attachment_ids when None (empty list can mean
@@ -1223,17 +1140,12 @@ class McpToolsWrite(models.AbstractModel):
             post_kwargs["attachment_ids"] = attachment_ids
         if body_is_html:
             # Odoo 17+ escapes a plain str body -- opt-in flag preserves HTML.
-            post_kwargs["body_is_html"] = True
+            pass  # Odoo 13 message_post treats body as html by default
 
         # Runs as the calling user -> ORM enforces write ACLs / record rules.
         message_rec = record.message_post(**post_kwargs)
 
-        confirmation = _(
-            "Posted message %(message_id)s to %(model)s record with ID %(id)s",
-            message_id=message_rec.id,
-            model=model,
-            id=record.id,
-        )
+        confirmation = _("Posted message %(message_id)s to %(model)s record with ID %(id)s") % {'message_id': message_rec.id, 'model': model, 'id': record.id}
         structured = {
             "success": True,
             "message_id": message_rec.id,

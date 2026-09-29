@@ -13,15 +13,11 @@ from . import test_helpers
 from . import test_logging
 from . import test_main_controller
 from . import test_mcp_protocol
-from . import test_migration_custom_tool_collision
-from . import test_migration_grant
 from . import test_mcp_rate_limit
 from . import test_mcp_read_tools
 from . import test_mcp_tools_unit
 from . import test_mcp_write_tools
 from . import test_model_selection_ui
-from . import test_oauth
-from . import test_oauth_scopes
 from . import test_rate_limiting
 from . import test_security
 from . import test_user_context

@@ -26,6 +26,7 @@ from odoo.exceptions import AccessError, MissingError, UserError
 from odoo.tools import ormcache
 from odoo.tools.mimetypes import guess_mimetype
 
+from ..compat import check_record_access
 from ..controllers import utils
 from ..tools.uri_schema import URIParseError, parse_attachment_uri, parse_field_uri
 
@@ -191,9 +192,9 @@ class McpMixin(models.AbstractModel):
         :raises AccessError: when ``model`` is not enabled for MCP access.
         """
         if not model or model not in self.env:
-            raise UserError(_("Unknown model: %s", model))
+            raise UserError(_("Unknown model: %s") % (model,))
         if not utils.is_model_mcp_enabled(self.env, model):
-            raise AccessError(_("Model '%s' is not enabled for MCP access.", model))
+            raise AccessError(_("Model '%s' is not enabled for MCP access.") % (model,))
         return self.env[model]
 
     def _check_op(self, model, operation):
@@ -210,11 +211,13 @@ class McpMixin(models.AbstractModel):
             raise AccessError(
                 _(
                     "Operation '%(operation)s' is not allowed on model "
-                    "'%(model)s' via MCP.",
-                    operation=operation,
-                    model=model,
-                )
+                    "'%(model)s' via MCP."
+                ) % {
+                    "operation": operation,
+                    "model": model,
+                }
             )
+
 
     @staticmethod
     def _coerce_record_id(value):
@@ -256,10 +259,11 @@ class McpMixin(models.AbstractModel):
         if not record:
             raise MissingError(
                 _(
-                    "Record not found: %(model)s with ID %(id)s",
-                    model=model,
-                    id=record_id,
-                )
+                    "Record not found: %(model)s with ID %(id)s"
+                ) % {
+                    "model": model,
+                    "id": record_id,
+                }
             )
         return record
 
@@ -267,29 +271,8 @@ class McpMixin(models.AbstractModel):
     # Resources
     # ------------------------------------------------------------------
     def _read_resource(self, uri):
-        """Resolve an ``odoo://`` resource URI to an MCP content entry.
-
-        Two native schemes are supported (the ones tool output emits in place
-        of inline base64):
-
-        * ``odoo://record/{model}/{id}/{field}`` -- a binary/image field on a
-          record. Gated through :meth:`_resolve_model` + :meth:`_check_op`
-          (``read``); the field read runs as the calling user, so Odoo's ACLs
-          and record rules still apply.
-        * ``odoo://attachment/{id}`` -- an ``ir.attachment``. Gated by the MCP
-          allow-list (see :meth:`_check_attachment_allowed`) *and* read as the
-          calling user (no ``sudo``), so ir.attachment's own access checks bind
-          it too.
-
-        :return: a single ``resources/read`` content entry, either
-            ``{uri, mimeType, text}`` (textual mimetype) or
-            ``{uri, mimeType, blob}`` (base64, everything else).
-        :raises UserError: unknown/unsupported URI, model or field; empty field.
-        :raises MissingError: the record or attachment does not exist.
-        :raises AccessError: the model/field is not MCP-enabled or ACL denies it.
-        """
         if not isinstance(uri, str) or not uri.startswith("odoo://"):
-            raise UserError(_("Invalid resource URI: %s", uri))
+            raise UserError(_("Invalid resource URI: %s") % (uri,))
 
         try:
             ref = parse_field_uri(uri)
@@ -301,16 +284,11 @@ class McpMixin(models.AbstractModel):
         try:
             attachment_id = parse_attachment_uri(uri)
         except URIParseError as err:
-            raise UserError(_("Unsupported resource URI: %s", uri)) from err
+            raise UserError(_("Unsupported resource URI: %s") % (uri,)) from err
         return self._read_attachment(uri, attachment_id)
 
     def _resolve_binary_field(self, ref):
-        """Gate + validate a ``odoo://record/...`` reference; return its model.
-
-        Applies :meth:`_resolve_model` and :meth:`_check_op` (``read``) for the
-        parent model, then checks the field exists and is binary/image. Shared
-        by ``resources/read`` and the ``read_attachment`` tool.
-        """
+        """Gate + validate a ``odoo://record/...`` reference; return its model."""
         model_rs = self._resolve_model(ref.model)
         self._check_op(ref.model, "read")
 
@@ -318,18 +296,20 @@ class McpMixin(models.AbstractModel):
         if field is None:
             raise UserError(
                 _(
-                    "Unknown field '%(field)s' on model '%(model)s'.",
-                    field=ref.field,
-                    model=ref.model,
-                )
+                    "Unknown field '%(field)s' on model '%(model)s'."
+                ) % {
+                    "field": ref.field,
+                    "model": ref.model,
+                }
             )
         if field.type not in _BINARY_FIELD_TYPES:
             raise UserError(
                 _(
-                    "Field '%(field)s' on '%(model)s' is not a binary field.",
-                    field=ref.field,
-                    model=ref.model,
-                )
+                    "Field '%(field)s' on '%(model)s' is not a binary field."
+                ) % {
+                    "field": ref.field,
+                    "model": ref.model,
+                }
             )
         return model_rs
 
@@ -352,19 +332,20 @@ class McpMixin(models.AbstractModel):
         """``MissingError`` for a binary field that holds no data."""
         return MissingError(
             _(
-                "Field '%(field)s' on %(model)s/%(id)s holds no data.",
-                field=ref.field,
-                model=ref.model,
-                id=ref.record_id,
-            )
+                "Field '%(field)s' on %(model)s/%(id)s holds no data."
+            ) % {
+                "field": ref.field,
+                "model": ref.model,
+                "id": ref.record_id,
+            }
         )
 
     def _read_attachment(self, uri, attachment_id):
         """Read an ``ir.attachment`` via the ``odoo://attachment/...`` scheme."""
-        # No sudo: ir.attachment's own access checks bind the read to the user.
         attachment = self.env["ir.attachment"].browse(attachment_id).exists()
         if not attachment:
-            raise MissingError(_("Attachment not found: %s", attachment_id))
+            raise MissingError(_("Attachment not found: %s") % (attachment_id,))
+
 
         # MCP allow-list gate on top of Odoo's ACL (below): without this an rpc
         # key could read any attachment beyond the configured models.
@@ -427,7 +408,7 @@ class McpMixin(models.AbstractModel):
         # No sudo: ir.attachment's own access checks bind the read to the user.
         attachment = self.env["ir.attachment"].browse(attachment_id).exists()
         if not attachment:
-            raise MissingError(_("Attachment not found: %s", attachment_id))
+            raise MissingError(_("Attachment not found: %s") % (attachment_id,))
         self._check_attachment_allowed(attachment)
         # Reading stored fields forces the attachment ACL check (AccessError
         # when the user may not read it) without loading the payload.
@@ -457,7 +438,7 @@ class McpMixin(models.AbstractModel):
         """
         model_rs = self._resolve_binary_field(ref)
         record = self._browse_record_or_raise(ref.model, model_rs, ref.record_id)
-        record.check_access("read")
+        check_record_access(record, "read")
         record.check_field_access_rights("read", [ref.field])
 
         target = {

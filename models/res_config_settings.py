@@ -155,12 +155,9 @@ class ResConfigSettings(models.TransientModel):
             "mcp_server.allowed_origins", (self.mcp_allowed_origins or "").strip()
         )
 
-        # Flush the @ormcache backing every MCP decision -- the per-model gates
-        # AND the global switches (is_mcp_enabled / is_oauth_enabled /
-        # get_allowed_origins) -- so a config change (e.g. the master kill-switch)
-        # takes effect immediately. registry.clear_cache() also signals the other
-        # workers via DB signaling, so the change propagates cross-worker on their
-        # next request rather than after a TTL.
-        self.env.registry.clear_cache()
+        # Flush the @ormcache backing every MCP decision
+        from ..compat import clear_registry_cache
+        clear_registry_cache(self.env.registry)
 
         return result
+

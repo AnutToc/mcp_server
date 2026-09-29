@@ -20,25 +20,16 @@ _logger = logging.getLogger(__name__)
 
 
 def clear_mcp_caches() -> None:
-    """Invalidate the @ormcache backing the global MCP switches.
+    """Invalidate the @ormcache backing the global MCP switches."""
+    from ..compat import clear_registry_cache
 
-    ``is_mcp_enabled`` / ``is_oauth_enabled`` / ``get_allowed_origins`` (and the
-    per-model gates) live in the registry's ``default`` ormcache pool. Production
-    config writes flush it via ``registry.clear_cache()`` on the writing env
-    (res.config.settings.set_values / mcp.enabled.model._invalidate_mcp_caches),
-    which also signals the other workers. This helper does the same for a direct
-    ``ir.config_parameter`` write -- or a test toggling a param outside those
-    paths. It clears the bound request's registry first (the one actually serving
-    this request), then every loaded registry as a fallback for a request-less
-    caller (e.g. a test ``setUp``). Clearing the whole ``default`` pool mirrors
-    what that write-side invalidation already does.
-    """
     try:
-        request.env.registry.clear_cache()
+        clear_registry_cache(request.env.registry)
     except Exception:  # noqa: BLE001 - no bound request (e.g. test setUp)
         pass
     for registry in list(Registry.registries.values()):
-        registry.clear_cache()
+        clear_registry_cache(registry)
+
 
 
 def sanitize_model_name(model_name: str) -> str:
@@ -543,23 +534,25 @@ def build_user_context(env: Environment) -> str:
         lines = [
             _("You are connected to Odoo via MCP as:"),
             _(
-                "- User: %(name)s (login: %(login)s)",
-                name=_one_line(user.display_name),
-                login=_one_line(user.login),
-            ),
-            _("- Timezone: %(tz)s", tz=timezone_line),
+                "- User: %(name)s (login: %(login)s)"
+            ) % {
+                "name": _one_line(user.display_name),
+                "login": _one_line(user.login),
+            },
+            _("- Timezone: %(tz)s") % {"tz": timezone_line},
             _(
-                "- Active company: %(name)s (ID: %(id)s)",
-                name=_one_line(company.display_name),
-                id=company.id,
-            ),
+                "- Active company: %(name)s (ID: %(id)s)"
+            ) % {
+                "name": _one_line(company.display_name),
+                "id": company.id,
+            },
         ]
         allowed_companies = user.company_ids
         if len(allowed_companies) > 1:
             names = ", ".join(
                 f"{_one_line(c.display_name)} (ID: {c.id})" for c in allowed_companies
             )
-            lines.append(_("- Allowed companies: %(names)s", names=names))
+            lines.append(_("- Allowed companies: %(names)s") % {"names": names})
         lines.append("")
         lines.append(_utc_datetime_guidance())
         lines.append("")

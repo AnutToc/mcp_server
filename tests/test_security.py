@@ -158,130 +158,21 @@ class TestMcpSecurity(common.TransactionCase):
             _ = self.test_model.with_user(self.regular_user).model_id.name
 
     # ------------------------------------------------------------------
-    # OAuth credential models must be read-only for group_mcp_admin.
-    # A delegated MCP admin holding create/write on mcp.oauth.token (or the
-    # authorization.code) could forge a bearer bound to any user and take over
-    # their account via /mcp, bypassing consent/PKCE. The admin ACL is
-    # therefore read-only; the only sanctioned state changes (token revoke,
-    # client activate/deactivate) go through sudo() object actions.
+    # MCP API Key model permissions
     # ------------------------------------------------------------------
-    def _a_client(self):
-        """Create an OAuth client as sudo (the AS provisions these, not admins)."""
-        return (
-            self.env["mcp.oauth.client"]
-            .sudo()
-            .create({"client_id": "test-client", "active": True})
+    def test_mcp_api_key_access(self):
+        """MCP User can generate and manage their API keys, regular user cannot."""
+        ApiKey = self.env["mcp.api.key"]
+
+        # MCP User can create an API key
+        key_raw = ApiKey.with_user(self.mcp_user).generate_key(
+            name="User Test Key", user_id=self.mcp_user.id
         )
+        self.assertTrue(key_raw)
 
-    def test_mcp_admin_cannot_forge_oauth_token(self):
-        """group_mcp_admin must not create/write/unlink OAuth tokens."""
-        client = self._a_client()
-        admin = self.env.ref("base.user_admin")
-        Token = self.env["mcp.oauth.token"].with_user(self.mcp_admin)
-
-        with self.assertRaises(AccessError, msg="admin must not create tokens"):
-            Token.create(
-                {
-                    "access_token_hash": "deadbeef",
-                    "user_id": admin.id,
-                    "client": client.id,
-                    "audience": "http://x/mcp",
-                    "access_expires_at": fields.Datetime.now() + timedelta(hours=1),
-                }
-            )
-
-        # An existing token (issued by the AS via sudo) must not be re-bindable
-        # to another user, nor deleted, by a delegated admin over RPC.
-        token = (
-            self.env["mcp.oauth.token"]
-            .sudo()
-            .create(
-                {
-                    "access_token_hash": "cafe",
-                    "user_id": self.regular_user.id,
-                    "client": client.id,
-                    "access_expires_at": fields.Datetime.now() + timedelta(hours=1),
-                }
-            )
-        )
-        with self.assertRaises(AccessError, msg="admin must not re-bind a token"):
-            token.with_user(self.mcp_admin).write({"user_id": admin.id})
-        with self.assertRaises(AccessError, msg="admin must not delete a token"):
-            token.with_user(self.mcp_admin).unlink()
-
-    def test_mcp_admin_cannot_forge_oauth_code(self):
-        """group_mcp_admin must not create authorization codes."""
-        client = self._a_client()
-        admin = self.env.ref("base.user_admin")
-        with self.assertRaises(AccessError, msg="admin must not create codes"):
-            self.env["mcp.oauth.authorization.code"].with_user(self.mcp_admin).create(
-                {
-                    "code_hash": "deadbeef",
-                    "user_id": admin.id,
-                    "client": client.id,
-                    "expires_at": fields.Datetime.now() + timedelta(minutes=1),
-                }
-            )
-
-    def test_mcp_admin_can_still_revoke_token(self):
-        """The sudo-routed admin revoke action still works despite the ACL."""
-        client = self._a_client()
-        token = (
-            self.env["mcp.oauth.token"]
-            .sudo()
-            .create(
-                {
-                    "access_token_hash": "beef",
-                    "user_id": self.regular_user.id,
-                    "client": client.id,
-                    "access_expires_at": fields.Datetime.now() + timedelta(hours=1),
-                }
-            )
-        )
-        token.with_user(self.mcp_admin).action_revoke()
-        self.assertTrue(token.sudo().revoked, "admin revoke button must still work")
-
-    def test_mcp_admin_can_toggle_client(self):
-        """The sudo-routed client activate/deactivate actions still work."""
-        client = self._a_client()
-        client.with_user(self.mcp_admin).action_deactivate()
-        self.assertFalse(client.sudo().active)
-        client.with_user(self.mcp_admin).action_activate()
-        self.assertTrue(client.sudo().active)
-
-    def test_non_admin_cannot_revoke_token(self):
-        """A non-MCP-admin must not reach the sudo-backed revoke.
-
-        These actions are public methods that sudo-write; /web/dataset/call_kw
-        (auth='user') invokes public methods with no ir.model.access pre-check,
-        so the has_group guard on the real user is the only thing stopping any
-        authenticated user from revoking arbitrary tokens.
-        """
-        client = self._a_client()
-        token = (
-            self.env["mcp.oauth.token"]
-            .sudo()
-            .create(
-                {
-                    "access_token_hash": "beef",
-                    "user_id": self.regular_user.id,
-                    "client": client.id,
-                    "access_expires_at": fields.Datetime.now() + timedelta(hours=1),
-                }
-            )
-        )
+        # Regular user cannot read/write mcp.api.key
         with self.assertRaises(AccessError):
-            token.with_user(self.regular_user).action_revoke()
-        self.assertFalse(token.sudo().revoked, "non-admin revoke must not take effect")
-
-    def test_non_admin_cannot_toggle_client(self):
-        """A non-MCP-admin must not reach the sudo-backed client toggle."""
-        client = self._a_client()
-        with self.assertRaises(AccessError):
-            client.with_user(self.regular_user).action_deactivate()
-        with self.assertRaises(AccessError):
-            client.with_user(self.regular_user).action_activate()
-        self.assertTrue(client.sudo().active, "non-admin toggle must not take effect")
+            ApiKey.with_user(self.regular_user).search([])
 
     def test_settings_menu_access(self):
         """Test MCP Admin can access settings menu but MCP User cannot"""

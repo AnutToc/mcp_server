@@ -26,20 +26,11 @@
     />
 
     <menuitem
-        id="menu_mcp_oauth_clients"
-        name="OAuth Clients"
+        id="menu_mcp_api_keys"
+        name="API Keys"
         parent="mcp_menu_technical"
-        action="action_mcp_oauth_clients"
+        action="action_mcp_api_key"
         sequence="30"
-        groups="mcp_server.group_mcp_admin"
-    />
-
-    <menuitem
-        id="menu_mcp_oauth_tokens"
-        name="OAuth Tokens"
-        parent="mcp_menu_technical"
-        action="action_mcp_oauth_tokens"
-        sequence="40"
         groups="mcp_server.group_mcp_admin"
     />
 
@@ -48,7 +39,7 @@
         name="Custom Tools"
         parent="mcp_menu_technical"
         action="action_mcp_custom_tool"
-        sequence="50"
+        sequence="40"
         groups="mcp_server.group_mcp_admin"
     />
 </odoo>

@@ -217,7 +217,7 @@ class TestMcpWriteTools(common.HttpCase):
         mixin_cls = type(self.env["mcp.mixin"])
         boom = MagicMock(side_effect=SerializationFailure("could not serialize access"))
         with mute_logger(
-            "odoo.addons.mcp_server.controllers.mcp_dispatcher",
+            "odoo.addons.mcp_server.controllers.mcp",
             "odoo.http",
             "odoo.service.model",
         ), patch.object(mixin_cls, "_resolve_model", boom):

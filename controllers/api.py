@@ -15,7 +15,11 @@ from odoo.service import (
 )
 from odoo.tools import config
 
-from odoo.addons.base.controllers.rpc import dumps as odoo_dumps
+try:
+    from odoo.addons.base.controllers.rpc import dumps as odoo_dumps
+except ImportError:
+    def odoo_dumps(params):
+        return xmlrpclib.dumps(params, methodresponse=1, allow_none=1)
 
 from . import auth, utils
 from .rate_limiting import (
@@ -250,23 +254,7 @@ class MCPObjectController(http.Controller):
         Failures propagate untouched -- the caller must not turn a rejected
         credential into anything the caller can distinguish.
         """
-        if config["test_enable"]:
-            # Core's ``check`` body on the request cursor: same auth counter,
-            # same active check, same credential verification -- minus the
-            # cursor it cannot open here and the ormcache entry (tests never
-            # reuse a warm one anyway).
-            users = api.Environment(request.env.cr, uid, {})["res.users"]
-            with users._assert_can_auth(user=uid):
-                if not users.env.user.active:
-                    raise AccessDenied()
-                credential = {
-                    "login": users.env.user.login,
-                    "password": auth_token,
-                    "type": "password",
-                }
-                users._check_credentials(credential, {"interactive": False})
-            return
-        request.env["res.users"].check(request.env.cr.dbname, uid, auth_token)
+        request.env["res.users"].sudo().check(request.env.cr.dbname, uid, auth_token)
 
     def _gate_password_credential(self, uid: Any, auth_token: Any) -> None:
         """Apply the MCP access-group gate to a (uid, password) credential.

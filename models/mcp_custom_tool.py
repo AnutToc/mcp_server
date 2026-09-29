@@ -98,9 +98,8 @@ class McpCustomTool(models.Model):
                 raise ValidationError(
                     _(
                         "Invalid tool name '%(name)s': use 1-64 characters from "
-                        "A-Z, a-z, 0-9, underscore or hyphen.",
-                        name=tool.name,
-                    )
+                        "A-Z, a-z, 0-9, underscore or hyphen."
+                    ) % {"name": tool.name}
                 )
             # A builtin tool always wins at dispatch, so a colliding custom tool
             # would never be callable -- reject it at save for clarity.
@@ -108,9 +107,8 @@ class McpCustomTool(models.Model):
                 raise ValidationError(
                     _(
                         "'%(name)s' is the name of a builtin MCP tool; pick a "
-                        "different name.",
-                        name=tool.name,
-                    )
+                        "different name."
+                    ) % {"name": tool.name}
                 )
 
     @api.constrains("input_schema")
@@ -120,7 +118,7 @@ class McpCustomTool(models.Model):
                 schema = json.loads(tool.input_schema or "")
             except (ValueError, TypeError) as err:
                 raise ValidationError(
-                    _("Input schema must be valid JSON: %s", err)
+                    _("Input schema must be valid JSON: %s") % (err,)
                 ) from err
             if not isinstance(schema, dict):
                 raise ValidationError(
@@ -133,10 +131,10 @@ class McpCustomTool(models.Model):
             if schema_type is not None and schema_type != "object":
                 raise ValidationError(
                     _(
-                        'Input schema \'type\' must be "object", got "%(type)s".',
-                        type=schema_type,
-                    )
+                        'Input schema \'type\' must be "object", got "%(type)s".'
+                    ) % {"type": schema_type}
                 )
+
             # ``required`` (when present) must be a list of property-name strings;
             # the tools/call required-arg check iterates and joins them. Reject a
             # malformed value here at save.
@@ -251,7 +249,7 @@ class McpCustomTool(models.Model):
         self.ensure_one()
         if not self._user_can_run():
             raise AccessError(
-                _("You are not allowed to run the '%(name)s' tool.", name=self.name)
+                _("You are not allowed to run the '%(name)s' tool.") % {"name": self.name}
             )
         # Read the action REFERENCE once under sudo via _sudo_action (mirroring
         # _user_can_run); the state guard and execution below both reuse it.

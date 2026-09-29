@@ -16,9 +16,9 @@ class McpModelSelectionWizard(models.TransientModel):
             ("transient", "=", False),
             ("model", "not like", "ir.%"),
             ("model", "not like", "base_%"),
-            # The module's own models (mcp.log, mcp.enabled.model, mcp.oauth.*)
-            # are never sensible MCP targets -- exposing mcp.oauth.token would
-            # even surface token hashes over MCP -- so keep them unselectable.
+            # The module's own models (mcp.log, mcp.enabled.model, mcp.api.key)
+            # are never sensible MCP targets -- exposing mcp.api.key would
+            # even surface key hashes over MCP -- so keep them unselectable.
             ("model", "not like", "mcp.%"),
         ]
         if enabled_model_ids:

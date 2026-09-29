@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <!-- Tree View -->
+    <record id="view_mcp_api_key_tree" model="ir.ui.view">
+        <field name="name">mcp.api.key.tree</field>
+        <field name="model">mcp.api.key</field>
+        <field name="arch" type="xml">
+            <tree string="MCP API Keys" decoration-muted="not active">
+                <field name="name" />
+                <field name="user_id" />
+                <field name="scope" />
+                <field name="create_date" />
+                <field name="active" />
+            </tree>
+        </field>
+    </record>
+
+    <!-- Form View -->
+    <record id="view_mcp_api_key_form" model="ir.ui.view">
+        <field name="name">mcp.api.key.form</field>
+        <field name="model">mcp.api.key</field>
+        <field name="arch" type="xml">
+            <form string="MCP API Key">
+                <sheet>
+                    <div class="oe_button_box" name="button_box" />
+                    <group>
+                        <group>
+                            <field name="name" />
+                            <field name="user_id" />
+                        </group>
+                        <group>
+                            <field name="scope" />
+                            <field name="active" />
+                            <field name="create_date" readonly="1" />
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Action -->
+    <record id="action_mcp_api_key" model="ir.actions.act_window">
+        <field name="name">API Keys</field>
+        <field name="res_model">mcp.api.key</field>
+        <field name="view_mode">tree,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create a new MCP API Key
+            </p>
+        </field>
+    </record>
+
+    <!-- Wizard Form View -->
+    <record id="view_mcp_api_key_wizard_form" model="ir.ui.view">
+        <field name="name">mcp.api.key.wizard.form</field>
+        <field name="model">mcp.api.key.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Generate API Key">
+                <field name="state" invisible="1" />
+                <div attrs="{'invisible': [('state', '!=', 'draft')]}">
+                    <group>
+                        <field name="name" />
+                        <field name="user_id" />
+                        <field name="scope" />
+                    </group>
+                </div>
+                <div attrs="{'invisible': [('state', '!=', 'generated')]}">
+                    <p class="alert alert-warning" role="alert">
+                        Please copy your API key now. You will not be able to see it again!
+                    </p>
+                    <group>
+                        <field name="generated_key" readonly="1" widget="CopyClipboardChar" />
+                    </group>
+                </div>
+                <footer>
+                    <button
+                        name="action_generate"
+                        string="Generate Key"
+                        type="object"
+                        class="btn-primary"
+                        attrs="{'invisible': [('state', '!=', 'draft')]}"
+                    />
+                    <button
+                        string="Close"
+                        class="btn-secondary"
+                        special="cancel"
+                    />
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- Action for Wizard -->
+    <record id="action_mcp_api_key_wizard" model="ir.actions.act_window">
+        <field name="name">Generate MCP API Key</field>
+        <field name="res_model">mcp.api.key.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+</odoo>

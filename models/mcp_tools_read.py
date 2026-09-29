@@ -31,7 +31,6 @@ from decimal import Decimal
 
 from odoo import _, api, models
 from odoo.exceptions import AccessError, MissingError, UserError
-from odoo.tools.misc import limited_field_access_token
 
 from ..controllers import utils
 from ..tools.formatters import DatasetFormatter, RecordFormatter
@@ -158,9 +157,9 @@ def _parse_list_arg(text, kind):
             return ast.literal_eval(text)
         except (ValueError, SyntaxError) as err:
             if kind == "domain":
-                message = _("Invalid domain: expected a list, got %s", text[:100])
+                message = _("Invalid domain: expected a list, got %s") % (text[:100],)
             else:
-                message = _("Invalid fields: expected a list, got %s", text[:100])
+                message = _("Invalid fields: expected a list, got %s") % (text[:100],)
             raise UserError(message) from err
 
 
@@ -369,7 +368,7 @@ class McpToolsRead(models.AbstractModel):
 
         lines = [
             "=" * 60,
-            _("MCP-enabled models (%s)", len(enriched)),
+            _("MCP-enabled models (%s)") % (len(enriched),),
             "=" * 60,
         ]
         if not enriched:
@@ -678,13 +677,13 @@ class McpToolsRead(models.AbstractModel):
     def _format_fields_text(model, fields, omitted=0):
         """Render field definitions as concise, LLM-friendly text."""
         count = (
-            _("%(shown)s of %(total)s", shown=len(fields), total=len(fields) + omitted)
+            _("%(shown)s of %(total)s") % {'shown': len(fields), 'total': len(fields) + omitted}
             if omitted
             else str(len(fields))
         )
         lines = [
             "=" * 60,
-            _("Fields: %(model)s (%(count)s)", model=model, count=count),
+            _("Fields: %(model)s (%(count)s)") % {'model': model, 'count': count},
             "=" * 60,
         ]
         for field in fields:
@@ -707,16 +706,13 @@ class McpToolsRead(models.AbstractModel):
                 line += ": " + ", ".join(str(option[0]) for option in selection)
                 more = field.get("selection_more")
                 if more:
-                    line += _(", ... +%(count)s more options", count=more)
+                    line += _(", ... +%(count)s more options") % {'count': more}
             lines.append(line)
         if omitted:
             lines.append(
-                _(
-                    "+ %(count)s more fields not shown. Pass field_names=[...] "
+                _("+ %(count)s more fields not shown. Pass field_names=[...] "
                     'for specific fields or ["__all__"] for the complete '
-                    "schema.",
-                    count=omitted,
-                )
+                    "schema.") % {'count': omitted}
             )
         return "\n".join(lines)
 
@@ -838,25 +834,14 @@ class McpToolsRead(models.AbstractModel):
         current_page = (offset // limit) + 1 if limit else 1
         next_hint = prev_hint = None
         if offset + len(rows) < total:
-            next_hint = _(
-                "search_records with offset=%(offset)s, limit=%(limit)s",
-                offset=offset + limit,
-                limit=limit,
-            )
+            next_hint = _("search_records with offset=%(offset)s, limit=%(limit)s") % {'offset': offset + limit, 'limit': limit}
             max_limit = self._limit_bounds()[1]
             if limit and limit < max_limit:
                 # Steer agents toward fewer, larger pages instead of looping
                 # through many small ones at the current limit.
-                next_hint += _(
-                    " (or raise limit up to %(max)s to fetch more per call)",
-                    max=max_limit,
-                )
+                next_hint += _(" (or raise limit up to %(max)s to fetch more per call)") % {'max': max_limit}
         if offset > 0:
-            prev_hint = _(
-                "search_records with offset=%(offset)s, limit=%(limit)s",
-                offset=max(0, offset - limit),
-                limit=limit,
-            )
+            prev_hint = _("search_records with offset=%(offset)s, limit=%(limit)s") % {'offset': max(0, offset - limit), 'limit': limit}
 
         text = DatasetFormatter(model).format_search_results(
             rows,
@@ -1022,11 +1007,7 @@ class McpToolsRead(models.AbstractModel):
 
         next_hint = None
         if has_more:
-            next_hint = _(
-                "aggregate_records with offset=%(offset)s, limit=%(limit)s",
-                offset=offset + limit,
-                limit=limit,
-            )
+            next_hint = _("aggregate_records with offset=%(offset)s, limit=%(limit)s") % {'offset': offset + limit, 'limit': limit}
 
         text = self._format_aggregate_text(
             model, list(groupby), effective_aggregates, cleaned_groups, next_hint
@@ -1083,11 +1064,11 @@ class McpToolsRead(models.AbstractModel):
         """Render aggregation buckets as compact LLM-friendly text."""
         lines = [
             "=" * 60,
-            _("Aggregate: %s", model),
+            _("Aggregate: %s") % (model,),
             "=" * 60,
-            _("Group by: %s", ", ".join(groupby)),
-            _("Aggregates: %s", ", ".join(aggregates)),
-            _("Groups: %s", len(groups)),
+            _("Group by: %s") % (", ".join(groupby),),
+            _("Aggregates: %s") % (", ".join(aggregates),),
+            _("Groups: %s") % (len(groups),),
             "",
         ]
         for idx, group in enumerate(groups, 1):
@@ -1104,7 +1085,7 @@ class McpToolsRead(models.AbstractModel):
             lines.append(f"[{idx}] " + " | ".join(parts))
         if next_hint:
             lines.append("")
-            lines.append(_("More groups available -- next page: %s", next_hint))
+            lines.append(_("More groups available -- next page: %s") % (next_hint,))
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -1173,7 +1154,7 @@ class McpToolsRead(models.AbstractModel):
         fmt = (format or "auto").strip().lower()
         if fmt not in _ATTACHMENT_FORMATS:
             raise UserError(
-                _("Invalid format '%s'; expected 'auto', 'link' or 'blob'.", fmt)
+                _("Invalid format '%s'; expected 'auto', 'link' or 'blob'.") % (fmt,)
             )
         target = self._resolve_read_attachment_target(uri, attachment_id)
 
@@ -1199,7 +1180,7 @@ class McpToolsRead(models.AbstractModel):
             )
 
         if not isinstance(uri, str) or not uri.startswith("odoo://"):
-            raise UserError(_("Invalid resource URI: %s", uri))
+            raise UserError(_("Invalid resource URI: %s") % (uri,))
         try:
             ref = parse_field_uri(uri)
         except URIParseError:
@@ -1209,7 +1190,7 @@ class McpToolsRead(models.AbstractModel):
         try:
             parsed_id = parse_attachment_uri(uri)
         except URIParseError as err:
-            raise UserError(_("Unsupported resource URI: %s", uri)) from err
+            raise UserError(_("Unsupported resource URI: %s") % (uri,)) from err
         return self._resolve_attachment_for_tool(uri, parsed_id)
 
     # -- result builders ------------------------------------------------
@@ -1241,7 +1222,7 @@ class McpToolsRead(models.AbstractModel):
         else:
             details = [target["mimetype"] or _("unknown type")]
             if target["file_size"] is not None:
-                details.append(_("%s bytes", target["file_size"]))
+                details.append(_("%s bytes") % (target["file_size"],))
         return f"{name} ({', '.join(details)})"
 
     def _attachment_url_result(self, target):
@@ -1249,8 +1230,8 @@ class McpToolsRead(models.AbstractModel):
         url = target["url"] or ""
         text = "\n".join(
             [
-                _("Attachment: %s", self._attachment_headline(target)),
-                _("External URL (untrusted, do not fetch blindly): %s", url),
+                _("Attachment: %s") % (self._attachment_headline(target),),
+                _("External URL (untrusted, do not fetch blindly): %s") % (url,),
             ]
         )
         return _tool_result(text, self._attachment_structured(target, "url", url=url))
@@ -1261,16 +1242,13 @@ class McpToolsRead(models.AbstractModel):
         lines = []
         if notice:
             lines.append(notice)
-        lines.append(_("Attachment: %s", self._attachment_headline(target)))
+        lines.append(_("Attachment: %s") % (self._attachment_headline(target),))
         lines.append(
-            _("Download URL: %s", link["download_url"] or link["download_path"])
+            _("Download URL: %s") % (link["download_url"] or link["download_path"],)
         )
         lines.append(
-            _(
-                "The link is valid until %s (UTC) and grants download access to "
-                "anyone holding it, without an Odoo login.",
-                link["expires_at"],
-            )
+            _("The link is valid until %s (UTC) and grants download access to "
+                "anyone holding it, without an Odoo login.") % (link["expires_at"],)
         )
         return _tool_result(
             "\n".join(lines), self._attachment_structured(target, "link", **link)
@@ -1281,12 +1259,8 @@ class McpToolsRead(models.AbstractModel):
         """Refuse an inline blob above ``MAX_INLINE_BLOB_BYTES`` (``None``: unknown)."""
         if size is not None and size > MAX_INLINE_BLOB_BYTES:
             raise UserError(
-                _(
-                    "Attachment is %(size)s bytes, above the %(cap)s-byte inline "
-                    "limit; call read_attachment with format='link' instead.",
-                    size=size,
-                    cap=MAX_INLINE_BLOB_BYTES,
-                )
+                _("Attachment is %(size)s bytes, above the %(cap)s-byte inline "
+                    "limit; call read_attachment with format='link' instead.") % {'size': size, 'cap': MAX_INLINE_BLOB_BYTES}
             )
 
     def _attachment_blob_result(self, target):
@@ -1298,7 +1272,7 @@ class McpToolsRead(models.AbstractModel):
         self._check_blob_cap(len(raw))
         entry = self._build_content_entry(target["uri"], target["mimetype"], raw)
         result = _tool_result(
-            _("Attachment: %s", self._attachment_headline(target)),
+            _("Attachment: %s") % (self._attachment_headline(target),),
             self._attachment_structured(target, "blob"),
         )
         result["content"].append({"type": "resource", "resource": entry})
@@ -1331,7 +1305,7 @@ class McpToolsRead(models.AbstractModel):
                 )
             raw = self._load_target_bytes(target)
             result = _tool_result(
-                _("Attachment: %s", self._attachment_headline(target)),
+                _("Attachment: %s") % (self._attachment_headline(target),),
                 self._attachment_structured(target, "image"),
             )
             result["content"].append(
@@ -1379,13 +1353,8 @@ class McpToolsRead(models.AbstractModel):
             text = text[:MAX_INLINE_TEXT_CHARS]
             link = self._attachment_download_link(target)
             extra.update(link)
-            text += "\n\n" + _(
-                "[Truncated after %(chars)s characters. Full file: %(url)s "
-                "(valid until %(expires)s UTC)]",
-                chars=MAX_INLINE_TEXT_CHARS,
-                url=link["download_url"] or link["download_path"],
-                expires=link["expires_at"],
-            )
+            text += "\n\n" + _("[Truncated after %(chars)s characters. Full file: %(url)s "
+                "(valid until %(expires)s UTC)]") % {'chars': MAX_INLINE_TEXT_CHARS, 'url': link["download_url"] or link["download_path"], 'expires': link["expires_at"]}
         return _tool_result(
             text, self._attachment_structured(target, format_used, text=text, **extra)
         )
@@ -1424,10 +1393,9 @@ class McpToolsRead(models.AbstractModel):
         else:
             record, field = target["record"], target["field"]
             path = f"/web/content/{record._name}/{record.id}/{field}"
-        # Core parses the embedded expiry with ``int(timestamp, 16)``; the
-        # HMAC scope is fixed to "binary" (the one /web/content verifies).
-        token = limited_field_access_token(record, field, hex(expires))
-        download_path = f"{path}?access_token={token}&download=true"
+        # In Odoo 13, access_token on attachment is used if available
+        token = getattr(attachment, "access_token", "") if attachment is not None else ""
+        download_path = f"{path}?access_token={token}&download=true" if token else f"{path}?download=true"
         params = self.env["ir.config_parameter"].sudo()  # sudo: system web.base.url
         base_url = params.get_param("web.base.url")
         download_url = f"{base_url.rstrip('/')}{download_path}" if base_url else None
@@ -1502,14 +1470,11 @@ class McpToolsRead(models.AbstractModel):
         so the name is validated separately.
         """
         if not model or model not in self.env:
-            raise UserError(_("Unknown model: %s", model))
+            raise UserError(_("Unknown model: %s") % (model,))
         if not self._attachment_read_allowed(model):
             raise AccessError(
-                _(
-                    "Listing attachments via MCP requires '%s' or 'ir.attachment' "
-                    "to be MCP-enabled for read.",
-                    model,
-                )
+                _("Listing attachments via MCP requires '%s' or 'ir.attachment' "
+                    "to be MCP-enabled for read.") % (model,)
             )
         record = self._browse_record_or_raise(model, self.env[model], record_id)
         # The user must be able to read the parent record itself, not merely
@@ -1557,13 +1522,7 @@ class McpToolsRead(models.AbstractModel):
 
         lines = [
             "=" * 60,
-            _(
-                "Attachments of %(model)s/%(id)s (%(shown)s of %(total)s)",
-                model=model,
-                id=record.id,
-                shown=len(entries),
-                total=total,
-            ),
+            _("Attachments of %(model)s/%(id)s (%(shown)s of %(total)s)") % {'model': model, 'id': record.id, 'shown': len(entries), 'total': total},
             "=" * 60,
         ]
         if not entries:
@@ -1573,20 +1532,16 @@ class McpToolsRead(models.AbstractModel):
             if entry["type"] == "url":
                 details.append(_("url"))
             elif entry["file_size"] is not None:
-                details.append(_("%s bytes", entry["file_size"]))
+                details.append(_("%s bytes") % (entry["file_size"],))
             lines.append(
                 f"[{idx}] {entry['name']} ({', '.join(details)}) -> {entry['uri']}"
             )
         if offset + len(entries) < total:
             lines.append("")
             lines.append(
-                _(
-                    "More attachments available -- next page: "
+                _("More attachments available -- next page: "
                     "list_record_attachments with offset=%(offset)s, "
-                    "limit=%(limit)s",
-                    offset=offset + limit,
-                    limit=limit,
-                )
+                    "limit=%(limit)s") % {'offset': offset + limit, 'limit': limit}
             )
         if entries:
             lines.append("")

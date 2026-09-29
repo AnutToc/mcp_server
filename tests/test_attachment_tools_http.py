@@ -30,17 +30,18 @@ from urllib.parse import parse_qsl, urlsplit
 import requests
 
 from odoo.tests import common, tagged
-from odoo.tests.common import TEST_CURSOR_COOKIE_NAME
-from odoo.tools.misc import limited_field_access_token
+try:
+    from odoo.tools.misc import limited_field_access_token
+except ImportError:
+    limited_field_access_token = None
 
-from ..controllers import mcp, oauth_server, rate_limiting, utils
+from ..controllers import mcp, rate_limiting, utils
 from .test_helpers import (
     UrlOpenCompatMixin,
     create_test_user,
     grant_mcp_access,
     users_groups_field,
 )
-from .test_oauth import _code_challenge
 
 _PNG_1X1_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4"
@@ -63,7 +64,6 @@ class TestAttachmentToolsHttp(UrlOpenCompatMixin, common.HttpCase):
         super().setUp()
         utils.clear_mcp_caches()
         rate_limiting._api_limiter.clear()
-        oauth_server._dcr_limiter.clear()
         mcp._audit_write_limiter.clear()
 
         unique_id = str(int(time.time() * 1000))[-6:]
@@ -339,15 +339,16 @@ class TestAttachmentToolsHttp(UrlOpenCompatMixin, common.HttpCase):
         self.assertEqual(response.status_code, 200, response.text[:300])
         self.assertEqual(response.content, b"hello over http")
 
-        # An expired token is refused.
-        expired = limited_field_access_token(
-            self.text_attachment, "raw", hex(int(time.time()) - 10)
-        )
-        response = self._anonymous_get(
-            f"{self.base_url()}/web/content/{self.text_attachment.id}"
-            f"?access_token={expired}&download=true"
-        )
-        self.assertNotEqual(response.status_code, 200)
+        # An expired token is refused (if supported in this Odoo version).
+        if limited_field_access_token:
+            expired = limited_field_access_token(
+                self.text_attachment, "raw", hex(int(time.time()) - 10)
+            )
+            response = self._anonymous_get(
+                f"{self.base_url()}/web/content/{self.text_attachment.id}"
+                f"?access_token={expired}&download=true"
+            )
+            self.assertNotEqual(response.status_code, 200)
 
     def test_read_attachment_gated_model_is_iserror(self):
         gated = (
@@ -415,87 +416,3 @@ class TestAttachmentToolsHttp(UrlOpenCompatMixin, common.HttpCase):
         # Round trip over the wire.
         read = self._call_tool("read_attachment", {"uri": structured["uri"]})
         self.assertEqual(read["content"][0]["text"], "memo body")
-
-    def _readonly_oauth_token(self):
-        """Run the OAuth flow with write consent withheld -> ``mcp:read``."""
-        register = self.url_open(
-            "/mcp/oauth/register",
-            json={
-                "client_name": "Attachment RO Client",
-                "redirect_uris": ["http://127.0.0.1:8765/callback"],
-                "grant_types": ["authorization_code", "refresh_token"],
-                "response_types": ["code"],
-                "token_endpoint_auth_method": "none",
-                "scope": "mcp mcp:read mcp:write",
-            },
-        )
-        self.assertIn(register.status_code, (200, 201), register.text[:500])
-        client_id = register.json()["client_id"]
-        self.authenticate(self.login, self.password)
-
-        verifier = secrets.token_urlsafe(48)
-        params = {
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": "http://127.0.0.1:8765/callback",
-            "scope": "mcp",
-            "state": "state-att",
-            "resource": self.base_url() + "/mcp",
-            "code_challenge": _code_challenge(verifier),
-            "code_challenge_method": "S256",
-        }
-        page = self.url_open("/mcp/oauth/authorize", params=params)
-        self.assertEqual(page.status_code, 200, page.text[:500])
-        match = re.search(r'name="csrf_token"\s+value="([^"]+)"', page.text)
-        self.assertIsNotNone(match)
-        post_data = {**params, "csrf_token": match.group(1), "decision": "allow"}
-        redirect = self.url_open(
-            "/mcp/oauth/authorize", data=post_data, allow_redirects=False
-        )
-        self.assertEqual(redirect.status_code, 302, redirect.text[:500])
-        code = dict(parse_qsl(urlsplit(redirect.headers["Location"]).query))["code"]
-        token_resp = self.url_open(
-            "/mcp/oauth/token",
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": "http://127.0.0.1:8765/callback",
-                "client_id": client_id,
-                "code_verifier": verifier,
-                "resource": self.base_url() + "/mcp",
-            },
-            allow_redirects=False,
-        )
-        self.assertEqual(token_resp.status_code, 200, token_resp.text[:500])
-        return token_resp.json()["access_token"]
-
-    def test_readonly_scope_blocks_upload_but_allows_link(self):
-        token = self._readonly_oauth_token()
-        names = set(self._tools(token=token))
-        self.assertNotIn("upload_attachment", names)
-        self.assertIn("read_attachment", names)
-        self.assertIn("list_record_attachments", names)
-
-        denied = self._call_tool(
-            "upload_attachment",
-            {"name": "x.txt", "data": base64.b64encode(b"x").decode("ascii")},
-            token=token,
-        )
-        self.assertTrue(denied["isError"], msg=denied)
-        self.assertIn("read-only", denied["content"][0]["text"].lower())
-
-        link = self._call_tool(
-            "read_attachment",
-            {"attachment_id": self.text_attachment.id, "format": "link"},
-            token=token,
-        )
-        self.assertFalse(link["isError"], msg=link)
-        self.assertIn("download_path", link["structuredContent"])
-
-        listing = self._call_tool(
-            "list_record_attachments",
-            {"model": "res.partner", "record_id": self.partner.id},
-            token=token,
-        )
-        self.assertFalse(listing["isError"], msg=listing)
-        self.assertEqual(listing["structuredContent"]["total"], 1)

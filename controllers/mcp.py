@@ -24,7 +24,13 @@ from odoo.exceptions import AccessError
 from odoo.http import Response, request
 
 from ..tools.uri_schema import URIParseError, parse_attachment_uri, parse_field_uri
-from . import audit, error_sanitizer, jsonrpc, oauth_server, rate_limiting, utils
+from ..compat import (
+    get_json_data,
+    make_json_response,
+    update_request_env,
+    disable_session_save,
+)
+from . import audit, auth, error_sanitizer, jsonrpc, rate_limiting, utils
 from .mcp_route import mcp_route
 
 _logger = logging.getLogger(__name__)
@@ -70,23 +76,8 @@ def _tool_error(text):
 
 
 def _write_allowed():
-    """Whether the current MCP session may invoke write (non-read-only) tools.
-
-    The read/write scope gate applies to OAuth tokens ONLY. Auth stashes
-    ``request._mcp_oauth_scope`` on the OAuth front door and NOTHING on the
-    API-key path, so we distinguish by presence:
-
-    * attribute absent (``None``) -> API key -> full access (no gate);
-    * attribute present but empty -> legacy OAuth token (issued before scopes)
-      -> full access;
-    * otherwise the space-separated scope must include ``mcp`` or ``mcp:write``;
-      a bare ``mcp:read`` grants read-only.
-    """
-    scope = getattr(request, "_mcp_oauth_scope", None)
-    # None (API key) or "" (legacy token) -> ungated; otherwise reuse
-    # oauth_server's predicate so the grant-time bound and this request-time
-    # gate cannot silently desync on what "write" means.
-    return not scope or oauth_server.scope_grants_write(scope)
+    """In Odoo 13 without OAuth, authenticated API key users have full access."""
+    return True
 
 
 def _requires_write(annotations):
@@ -144,115 +135,139 @@ class MCPController(http.Controller):
     # /mcp is the canonical path; /mcp/rpc is a legacy alias of the same
     # endpoint (its audience is likewise still accepted, see
     # oauth_server.accepted_resource_urls).
-    @mcp_route(["/mcp", "/mcp/rpc"], methods=["POST"])
+    @http.route(
+        ["/mcp", "/mcp/", "/mcp/rpc"],
+        type="http",
+        auth="none",
+        methods=["POST", "OPTIONS"],
+        csrf=False,
+        cors="*",
+    )
     def handle_rpc(self, **kwargs):
-        """Validate the JSON-RPC envelope and dispatch on ``method``.
+        """Validate the JSON-RPC envelope and dispatch on ``method`` (Odoo 13)."""
+        # 1. Handle CORS preflight
+        if request.httprequest.method == "OPTIONS":
+            resp = Response(status=204)
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+            resp.headers["Access-Control-Allow-Headers"] = (
+                "Origin, Content-Type, Accept, Authorization, X-Odoo-DB, MCP-Protocol-Version"
+            )
+            return resp
 
-        Returns a JSON-RPC response dict (the dispatcher serialises it) or, for
-        notifications, an empty HTTP 202 ``Response``.
-        """
-        request_id = kwargs.get("id")
+        # 2. Origin check (DNS rebinding protection)
+        origin = request.httprequest.headers.get("Origin")
+        allowed_origins = utils.get_allowed_origins()
+        if origin and allowed_origins:
+            norm_origin = origin.rstrip("/").lower()
+            if norm_origin not in allowed_origins:
+                return Response("Forbidden: Origin not allowed", status=403)
 
-        # Coarse global gate -- per-model ACLs are enforced once tools exist.
+        # 3. Check X-Odoo-DB header
+        odoo_db = request.httprequest.headers.get("X-Odoo-DB")
+        if odoo_db and hasattr(request, "session"):
+            request.session.db = odoo_db
+
+        # 4. Global MCP enabled check
         if not utils.is_mcp_enabled():
-            return jsonrpc.make_error(
-                request_id,
-                jsonrpc.SERVER_ERROR,
-                _("MCP server is disabled globally."),
+            return make_json_response(
+                jsonrpc.make_error(None, jsonrpc.SERVER_ERROR, _("MCP server is disabled globally."))
             )
 
-        try:
-            method, params, request_id = jsonrpc.parse_request(kwargs)
-        except jsonrpc.JSONRPCError as err:
-            return jsonrpc.make_error(request_id, err.code, err.message, err.data)
+        # 5. Authenticate via Bearer token
+        auth_header = request.httprequest.headers.get("Authorization", "")
+        token = ""
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+        elif auth_header:
+            token = auth_header.strip()
 
-        # Per-request rate limiting (after auth, before dispatch).
+        user = auth.get_user_from_api_key(token, allowed_scopes=("mcp", "global"))
+        if not user:
+            resp = Response("Unauthorized", status=401)
+            resp.headers["WWW-Authenticate"] = 'Bearer error="invalid_token"'
+            return resp
+
+        if not auth.user_has_mcp_access(user):
+            auth.log_mcp_group_denied(user, api_key_used=True)
+            return Response("Forbidden: User lacks MCP access", status=403)
+
+        update_request_env(user.id)
+        disable_session_save()
+
+        # 6. Parse JSON request body
+        try:
+            body = get_json_data()
+        except Exception:
+            return make_json_response(
+                jsonrpc.make_error(None, jsonrpc.PARSE_ERROR, "Parse error")
+            )
+
+        request_id = body.get("id") if isinstance(body, dict) else None
+
+        try:
+            method, params, request_id = jsonrpc.parse_request(body)
+        except jsonrpc.JSONRPCError as err:
+            return make_json_response(
+                jsonrpc.make_error(request_id, err.code, err.message, err.data)
+            )
+
+        # 7. Per-request rate limiting
         rate_limited = self._enforce_rate_limit(method, request_id)
         if rate_limited is not None:
             return rate_limited
 
+        # 8. Dispatch method
         handler = self._METHOD_HANDLERS.get(method)
         try:
             if handler is not None:
                 result = handler(self, params)
             elif method.startswith("notifications/"):
-                # Tolerate any other client->server notification: no response body.
                 result = self._notification_ack(params)
             else:
-                return jsonrpc.make_error(
-                    request_id,
-                    jsonrpc.METHOD_NOT_FOUND,
-                    _("Method not found: %(method)s", method=method),
+                return make_json_response(
+                    jsonrpc.make_error(
+                        request_id,
+                        jsonrpc.METHOD_NOT_FOUND,
+                        _("Method not found: %(method)s") % {"method": method},
+                    )
                 )
         except jsonrpc.JSONRPCError as err:
-            return jsonrpc.make_error(request_id, err.code, err.message, err.data)
+            return make_json_response(
+                jsonrpc.make_error(request_id, err.code, err.message, err.data)
+            )
 
-        # Notifications return a bare 202 Response; everything else a JSON-RPC
-        # result the dispatcher will serialise.
         if isinstance(result, Response):
             return result
-        return jsonrpc.make_response(request_id, result)
+        return make_json_response(jsonrpc.make_response(request_id, result))
 
     # ------------------------------------------------------------------
     # Rate limiting
     # ------------------------------------------------------------------
     def _enforce_rate_limit(self, method, request_id):
-        """Enforce the per-request rate limit on ``/mcp``.
-
-        Called after auth and before dispatch. Mirrors the legacy ``@rate_limit``
-        decorator's logic -- check-then-record, keyed on the API-key owner -- but
-        invokes the :mod:`rate_limiting` primitives directly, because that
-        decorator needs ``kwargs['user']`` + ``type='http'`` plumbing that is
-        absent under our ``type='mcp'`` dispatcher.
-
-        PER-WORKER LIMITATION: the limiter keeps its counters in a
-        per-process in-memory dict, so the cap is enforced PER WORKER -- with N
-        Odoo HTTP workers the effective ceiling is ``N x request_limit``. Move the
-        counters to a shared store (Redis / a DB table) if a true global cap is
-        ever required.
-
-        RETRY DOUBLE-COUNT: the hit is recorded here, before dispatch, and a
-        tool that raises OperationalError is re-raised for
-        ``service.model.retrying`` (re-runs this whole handler, up to 5x) -- so a
-        serialization-conflicted write records one hit per attempt. Left as-is:
-        the miscount is self-penalizing (a caller's own retried write burns its
-        own quota), bounded, and in the safe (stricter) direction, so it cannot
-        be used to exceed the cap. The audit path guards this via
-        ``concurrency_retry``; the limiter accepts it as best-effort.
-
-        :return: an HTTP 429 JSON-RPC :class:`~odoo.http.Response` (carrying a
-            ``Retry-After`` header) when the owner is over the limit, else
-            ``None`` to let the request proceed.
-        """
         if not self._counts_against_rate_limit(method):
             return None
         if not rate_limiting.is_rate_limiting_enabled():
             return None
 
         uid = request.env.uid
-        # Namespace the rate-limit bucket by database (cross-tenant collision).
         dbname = request.env.cr.dbname
         if not rate_limiting.check_rate_limit(uid, dbname):
-            # Dedupe the over-limit audit (see _rate_limit_audit_limiter) so a
-            # flood cannot amplify into one committed-cursor write per rejected
-            # request; the 429 below is always returned regardless.
             if not _rate_limit_audit_limiter.is_limited((dbname, uid), 1):
                 self._audit_rate_limit_exceeded(uid)
-            # The limiter only exposes its (fixed) window, so advertise that as
-            # the upper-bound back-off; the window is the worst case before a
-            # slot frees up.
             retry_after = rate_limiting.RATE_LIMIT_WINDOW_MINUTES * 60
             body = jsonrpc.make_error(
                 request_id,
                 jsonrpc.SERVER_ERROR,
                 _("Rate limit exceeded; too many requests."),
             )
-            return request.make_json_response(
+            return make_json_response(
                 body, headers=[("Retry-After", str(retry_after))], status=429
             )
 
         rate_limiting.record_api_request(uid, dbname)
         return None
+
 
     def _counts_against_rate_limit(self, method):
         """Whether ``method`` consumes a rate-limit slot.
@@ -546,9 +561,8 @@ class MCPController(http.Controller):
                     operation,
                     model_name,
                     _(
-                        "You are not allowed to run the '%(name)s' tool.",
-                        name=name,
-                    ),
+                        "You are not allowed to run the '%(name)s' tool."
+                    ) % {"name": name},
                 )
 
             # Scope gate: a read-only OAuth session (scope mcp:read) may only
@@ -573,9 +587,8 @@ class MCPController(http.Controller):
                     model_name,
                     _(
                         "This connection was authorized read-only (scope "
-                        "mcp:read); the '%(name)s' tool requires write access.",
-                        name=name,
-                    ),
+                        "mcp:read); the '%(name)s' tool requires write access."
+                    ) % {"name": name},
                 )
 
             # Required-argument check (SEP-1303: refused as an isError tool
@@ -591,9 +604,8 @@ class MCPController(http.Controller):
                 return self._reject_invalid_input(
                     name,
                     _(
-                        "Missing required argument(s): %(fields)s",
-                        fields=", ".join(missing),
-                    ),
+                        "Missing required argument(s): %(fields)s"
+                    ) % {"fields": ", ".join(missing)},
                 )
             unknown = self._unknown_args(meta["input_schema"], arguments)
             if unknown:
@@ -601,9 +613,8 @@ class MCPController(http.Controller):
                 return self._reject_invalid_input(
                     name,
                     _(
-                        "Unknown argument(s): %(fields)s",
-                        fields=", ".join(sorted(map(str, unknown))),
-                    ),
+                        "Unknown argument(s): %(fields)s"
+                    ) % {"fields": ", ".join(sorted(map(str, unknown)))},
                 )
             try:
                 # Run the tool AND normalize its result inside one savepoint, so
@@ -769,7 +780,7 @@ class MCPController(http.Controller):
             # _user_can_run() gate in _tools_call as an access-denied isError. This
             # is an existence oracle for NAMES ONLY, and only to an already-
             # authenticated caller -- an accepted tradeoff.
-            self._audit_rejected_call(name, _("Unknown tool: %(name)s", name=name))
+            self._audit_rejected_call(name, _("Unknown tool: %(name)s") % {"name": name})
         # Re-bind to the caller's non-su env for the authorization gate and
         # execution: _user_can_run() / _run_tool must evaluate the caller's ACLs,
         # never sudo's.

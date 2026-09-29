@@ -21,7 +21,7 @@ from urllib.parse import parse_qsl, urlsplit
 from odoo import fields
 from odoo.tests import common, tagged
 
-from ..controllers import auth, oauth_server, rate_limiting, utils
+from ..controllers import auth, rate_limiting, utils
 from ..models import ir_http
 from .test_helpers import (
     UrlOpenCompatMixin,
@@ -29,7 +29,6 @@ from .test_helpers import (
     grant_mcp_access,
     users_groups_field,
 )
-from .test_oauth import _code_challenge, _sha256_hex
 
 # Must match mcp_server/controllers/mcp.py.
 PREFERRED_PROTOCOL_VERSION = "2025-11-25"
@@ -47,7 +46,6 @@ class TestMcpAccessGroupGate(UrlOpenCompatMixin, common.HttpCase):
         rate_limiting._api_limiter.clear()
         ir_http._bearer_failure_limiter.clear()
         auth._auth_failure_limiter.clear()
-        oauth_server._dcr_limiter.clear()
 
         unique_id = str(int(time.time() * 1000))[-6:]
         self.password = "gate_pw"  # nosec B105 - test fixture credential
@@ -128,62 +126,6 @@ class TestMcpAccessGroupGate(UrlOpenCompatMixin, common.HttpCase):
         }
         return self.url_open("/mcp", data=json.dumps(body), headers=headers)
 
-    def _register_client(self):
-        """Register a public PKCE client via RFC 7591 DCR; return client_id."""
-        response = self.url_open(
-            "/mcp/oauth/register",
-            json={
-                "redirect_uris": [self.redirect_uri],
-                "client_name": "Gate Test Client",
-                "scope": "mcp",
-            },
-        )
-        self.assertIn(response.status_code, (200, 201), response.text[:500])
-        return response.json()["client_id"]
-
-    def _authorize_params(self, client_id, challenge):
-        """Assemble a valid PKCE-S256 authorization request."""
-        return {
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": self.redirect_uri,
-            "scope": "mcp",
-            "state": "state-gate",
-            "resource": self.resource,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-        }
-
-    def _approve_consent(self, params):
-        """Render the consent page, approve it with CSRF, return the code."""
-        get_resp = self.url_open("/mcp/oauth/authorize", params=params)
-        self.assertEqual(get_resp.status_code, 200, get_resp.text[:500])
-        match = re.search(r'name="csrf_token"\s+value="([^"]+)"', get_resp.text)
-        self.assertIsNotNone(match, "consent page must embed a CSRF token")
-        post_data = dict(params, csrf_token=match.group(1), decision="allow")
-        post_resp = self.url_open(
-            "/mcp/oauth/authorize", data=post_data, allow_redirects=False
-        )
-        self.assertEqual(post_resp.status_code, 302, post_resp.text[:500])
-        query = dict(parse_qsl(urlsplit(post_resp.headers["Location"]).query))
-        self.assertIn("code", query, post_resp.headers.get("Location"))
-        return query["code"]
-
-    def _exchange_code(self, client_id, code, verifier):
-        """Swap an authorization code for tokens; return the raw response."""
-        return self.url_open(
-            "/mcp/oauth/token",
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": self.redirect_uri,
-                "client_id": client_id,
-                "code_verifier": verifier,
-                "resource": self.resource,
-            },
-            allow_redirects=False,
-        )
-
     # ------------------------------------------------------------------
     # Native /mcp bearer door -- API-key front door
     # ------------------------------------------------------------------
@@ -234,36 +176,6 @@ class TestMcpAccessGroupGate(UrlOpenCompatMixin, common.HttpCase):
         field = "user_ids" if "user_ids" in group._fields else "users"
         group.write({field: [(3, self.user_ingroup.id)]})
         self.assertEqual(self._post_rpc(self.key_ingroup).status_code, 403)
-
-    # ------------------------------------------------------------------
-    # Native /mcp bearer door -- OAuth front door
-    # ------------------------------------------------------------------
-    def test_oauth_token_of_non_member_refused_403(self):
-        """A live, audience-bound OAuth token of a non-member is refused (403)."""
-        unique_id = str(int(time.time() * 1000))[-6:]
-        client = (
-            self.env["mcp.oauth.client"]
-            .sudo()
-            .create(
-                {
-                    "client_id": f"gate-client-{unique_id}",
-                    "redirect_uris": self.redirect_uri,
-                }
-            )
-        )
-        raw = secrets.token_urlsafe(48)
-        self.env["mcp.oauth.token"].sudo().create(
-            {
-                "access_token_hash": _sha256_hex(raw),
-                "client": client.id,
-                "user_id": self.user_nogroup.id,
-                "scope": "mcp",
-                "audience": self.resource,
-                "access_expires_at": fields.Datetime.now() + timedelta(hours=1),
-            }
-        )
-        response = self._post_rpc(raw)
-        self.assertEqual(response.status_code, 403, response.text[:300])
 
     # ------------------------------------------------------------------
     # Legacy REST routes (X-API-Key header and session cookie doors)
@@ -505,87 +417,3 @@ class TestMcpAccessGroupGate(UrlOpenCompatMixin, common.HttpCase):
         self.assertIn(self.env.ref("mcp_server.group_mcp_user"), groups)
         key = self._mint_key(admin, "Sysadmin Key")
         self.assertEqual(self._post_rpc(key).status_code, 200)
-
-    # ------------------------------------------------------------------
-    # OAuth authorize (consent screen) and token grants
-    # ------------------------------------------------------------------
-    def test_consent_refused_for_non_member(self):
-        """The consent screen shows a clear error to a non-member (no code).
-
-        Failing at consent time -- not only at /mcp use time -- turns
-        "connected, then every call 403s" into an explanation the resource
-        owner can act on, and no dead token is ever minted.
-        """
-        client_id = self._register_client()
-        self.authenticate(self.nogroup_login, self.password)
-        params = self._authorize_params(
-            client_id, _code_challenge(secrets.token_urlsafe(48))
-        )
-        response = self.url_open("/mcp/oauth/authorize", params=params)
-        self.assertEqual(response.status_code, 400, response.text[:500])
-        self.assertIn("not authorized to use the MCP", response.text)
-
-    def test_consent_reached_by_member(self):
-        """A group member still reaches the consent screen (positive control)."""
-        client_id = self._register_client()
-        self.authenticate(self.ingroup_login, self.password)
-        params = self._authorize_params(
-            client_id, _code_challenge(secrets.token_urlsafe(48))
-        )
-        response = self.url_open("/mcp/oauth/authorize", params=params)
-        self.assertEqual(response.status_code, 200, response.text[:500])
-        self.assertIn("csrf_token", response.text)
-
-    def test_code_exchange_after_group_removal_fails(self):
-        """A code consented while a member dies at exchange after removal.
-
-        The auth-code grant re-checks membership when binding the user
-        (mirroring the archived-account check), so the window between consent
-        and exchange cannot be used to smuggle out a token.
-        """
-        client_id = self._register_client()
-        self.authenticate(self.ingroup_login, self.password)
-        verifier = secrets.token_urlsafe(48)
-        code = self._approve_consent(
-            self._authorize_params(client_id, _code_challenge(verifier))
-        )
-        self._remove_mcp_group(self.user_ingroup)
-
-        response = self._exchange_code(client_id, code, verifier)
-        self.assertEqual(response.status_code, 400, response.text[:300])
-        self.assertEqual(response.json().get("error"), "invalid_grant")
-
-    def test_refresh_after_group_removal_fails(self):
-        """An outstanding refresh token dies cleanly after group removal.
-
-        The refresh grant re-checks membership, so the rotation cannot mint an
-        access token that would only 403 at /mcp anyway.
-        """
-        client_id = self._register_client()
-        self.authenticate(self.ingroup_login, self.password)
-        verifier = secrets.token_urlsafe(48)
-        code = self._approve_consent(
-            self._authorize_params(client_id, _code_challenge(verifier))
-        )
-        exchange = self._exchange_code(client_id, code, verifier)
-        self.assertEqual(exchange.status_code, 200, exchange.text[:300])
-        refresh_token = exchange.json()["refresh_token"]
-
-        self._remove_mcp_group(self.user_ingroup)
-
-        response = self.url_open(
-            "/mcp/oauth/token",
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-                "client_id": client_id,
-            },
-            allow_redirects=False,
-        )
-        self.assertEqual(response.status_code, 400, response.text[:300])
-        payload = response.json()
-        # Authlib's refresh grant maps a refused user to invalid_request (only
-        # the auth-code grant raises invalid_grant); the contract asserted here
-        # is the refusal itself -- an RFC 6749 error and no token minted.
-        self.assertIn(payload.get("error"), ("invalid_request", "invalid_grant"))
-        self.assertNotIn("access_token", payload)

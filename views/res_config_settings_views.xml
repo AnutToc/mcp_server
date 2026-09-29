@@ -6,7 +6,7 @@
         <field name="priority">20</field>
         <field name="inherit_id" ref="base.res_config_settings_view_form" />
         <field name="arch" type="xml">
-            <xpath expr="//block[@name='integration']" position="after">
+            <xpath expr="//div[hasclass('settings')]" position="inside">
                 <div
                     class="app_settings_block"
                     data-string="MCP Server"
@@ -23,7 +23,7 @@
                                 <label for="mcp_enabled" />
                                 <a
                                     title="Master switch to enable or disable all MCP server functionality. When disabled, all MCP endpoints (REST API and XML-RPC) will return errors and deny access to any MCP operations."
-                                    class="o_doc_link me-2"
+                                    class="o_doc_link mr-2"
                                 >
                                     <i class="fa fa-question-circle" />
                                 </a>
@@ -31,11 +31,11 @@
                                     Enable or disable MCP server access globally
                                 </div>
                                 <br />
-                                <div class="content-group" invisible="not mcp_enabled">
+                                <div class="content-group" attrs="{'invisible': [('mcp_enabled', '=', False)]}">
                                     <div>
                                         <button
                                             name="%(mcp_server.action_mcp_enabled_models)d"
-                                            icon="oi-arrow-right"
+                                            icon="fa-arrow-right"
                                             type="action"
                                             string="Manage MCP Available Models"
                                             class="btn-link"
@@ -44,7 +44,7 @@
                                     <div class="mt8">
                                         <button
                                             name="%(mcp_server.action_mcp_custom_tool)d"
-                                            icon="oi-arrow-right"
+                                            icon="fa-arrow-right"
                                             type="action"
                                             string="Manage Custom Tools"
                                             class="btn-link"
@@ -57,7 +57,7 @@
 
                     <div
                         class="row mt16 o_settings_container"
-                        invisible="not mcp_enabled"
+                        attrs="{'invisible': [('mcp_enabled', '=', False)]}"
                     >
                         <div class="col-12 col-lg-6 o_setting_box">
                             <div class="o_setting_left_pane">
@@ -67,7 +67,7 @@
                                 <label for="mcp_enable_logging" />
                                 <a
                                     title="Enable audit logging for all MCP operations. When enabled, all API calls (REST and XML-RPC) will be logged to the mcp.log model including request details, user information, and responses. Note: Enabling logging may impact performance for high-volume API usage."
-                                    class="o_doc_link me-2"
+                                    class="o_doc_link mr-2"
                                 >
                                     <i class="fa fa-question-circle" />
                                 </a>
@@ -77,7 +77,7 @@
 
                                 <div
                                     class="content-group mt16"
-                                    invisible="not mcp_enable_logging"
+                                    attrs="{'invisible': [('mcp_enable_logging', '=', False)]}"
                                 >
                                     <div class="row">
                                         <div class="col-12">
@@ -87,7 +87,7 @@
                                             />
                                             <a
                                                 title="Number of days to keep MCP log entries. Logs older than this will be automatically deleted by a scheduled action to save storage space. Set to 0 to keep logs forever. Default: 30 days."
-                                                class="o_doc_link me-2"
+                                                class="o_doc_link mr-2"
                                             >
                                                 <i class="fa fa-question-circle" />
                                             </a>
@@ -105,7 +105,7 @@
                                         <div class="col-12">
                                             <button
                                                 name="%(mcp_server.action_mcp_logs)d"
-                                                icon="oi-arrow-right"
+                                                icon="fa-arrow-right"
                                                 type="action"
                                                 string="View MCP Logs"
                                                 class="btn-link"
@@ -124,7 +124,7 @@
                                 <label for="mcp_enable_rate_limiting" />
                                 <a
                                     title="Enable rate limiting to prevent API abuse and ensure fair usage. When enabled, requests will be limited per user per minute. You can configure the specific limits below. Disabling this allows unlimited API requests which may impact server performance."
-                                    class="o_doc_link me-2"
+                                    class="o_doc_link mr-2"
                                 >
                                     <i class="fa fa-question-circle" />
                                 </a>
@@ -134,7 +134,7 @@
 
                                 <div
                                     class="content-group mt16"
-                                    invisible="not mcp_enable_rate_limiting"
+                                    attrs="{'invisible': [('mcp_enable_rate_limiting', '=', False)]}"
                                 >
                                     <div class="row">
                                         <div class="col-12">
@@ -144,7 +144,7 @@
                                             />
                                             <a
                                                 title="Maximum API requests allowed per user per minute. Set to 0 for unlimited requests (not recommended for production). Default: 300. Lower values provide better protection against abuse but may impact legitimate usage. Consider your typical API usage patterns when setting this limit."
-                                                class="o_doc_link me-2"
+                                                class="o_doc_link mr-2"
                                             >
                                                 <i class="fa fa-question-circle" />
                                             </a>
@@ -166,42 +166,31 @@
 
                     <div
                         class="row mt16 o_settings_container"
-                        invisible="not mcp_enabled"
+                        attrs="{'invisible': [('mcp_enabled', '=', False)]}"
                     >
                         <div class="col-12 col-lg-6 o_setting_box">
-                            <div class="o_setting_left_pane">
-                                <field name="mcp_enable_oauth" />
-                            </div>
+                            <div class="o_setting_left_pane" />
                             <div class="o_setting_right_pane">
-                                <label for="mcp_enable_oauth" />
-                                <a
-                                    title="Allow browser MCP clients (Claude.ai, Gemini) to connect by logging into Odoo via the built-in OAuth 2.1 flow, in addition to API keys. Enabled by default; turn it off to disable the /mcp/oauth/* endpoints and OAuth discovery and accept only API-key auth."
-                                    class="o_doc_link me-2"
-                                >
-                                    <i class="fa fa-question-circle" />
-                                </a>
+                                <span class="o_form_label">API Key Authentication</span>
                                 <div class="text-muted">
-                                    Let browser clients sign in with Odoo via OAuth 2.1 (on by default)
+                                    Manage API keys for AI assistants and MCP clients
                                 </div>
-                                <div
-                                    class="content-group mt16"
-                                    invisible="not mcp_enable_oauth"
-                                >
+                                <div class="content-group mt16">
                                     <div>
                                         <button
-                                            name="%(mcp_server.action_mcp_oauth_clients)d"
-                                            icon="oi-arrow-right"
+                                            name="%(mcp_server.action_mcp_api_key)d"
+                                            icon="fa-arrow-right"
                                             type="action"
-                                            string="Manage OAuth Clients"
+                                            string="Manage MCP API Keys"
                                             class="btn-link"
                                         />
                                     </div>
                                     <div class="mt8">
                                         <button
-                                            name="%(mcp_server.action_mcp_oauth_tokens)d"
-                                            icon="oi-arrow-right"
+                                            name="%(mcp_server.action_mcp_api_key_wizard)d"
+                                            icon="fa-arrow-right"
                                             type="action"
-                                            string="Manage OAuth Tokens"
+                                            string="Generate New API Key"
                                             class="btn-link"
                                         />
                                     </div>
@@ -215,7 +204,7 @@
                                 <label for="mcp_allowed_origins" />
                                 <a
                                     title="Comma-separated list of browser Origin values allowed to call the MCP endpoint. Leave empty to accept requests regardless of Origin (default). When set, a request whose Origin header is not on the list is refused with HTTP 403 (MCP DNS-rebinding protection). Native MCP clients such as Claude Desktop or Cursor send no Origin header and are always accepted."
-                                    class="o_doc_link me-2"
+                                    class="o_doc_link mr-2"
                                 >
                                     <i class="fa fa-question-circle" />
                                 </a>
@@ -236,7 +225,7 @@
                     <div
                         class="row mt16 o_settings_container"
                         id="mcp_tool_limits"
-                        invisible="not mcp_enabled"
+                        attrs="{'invisible': [('mcp_enabled', '=', False)]}"
                     >
                         <div class="col-12 col-lg-6 o_setting_box">
                             <div class="o_setting_right_pane">
@@ -343,7 +332,7 @@
                                                 class="o_light_label"
                                             />
                                             <div class="text-muted">
-                                                Validity of read_attachment download links (bearer URLs, no login needed)
+                                                Validity of read_attachment download links
                                             </div>
                                             <field
                                                 name="mcp_link_ttl_hours"

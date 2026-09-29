@@ -51,10 +51,9 @@ class MCPLog(models.Model):
         [("api_key", "API Key"), ("oauth", "OAuth"), ("session", "Session")],
         index=True,
     )
-    oauth_client_id = fields.Many2one(
-        "mcp.oauth.client", string="OAuth Client", ondelete="set null", index=True
-    )
+    oauth_client_id = fields.Integer(string="OAuth Client ID", index=True)
     oauth_scope = fields.Char()
+
 
     # Request details
     endpoint = fields.Char(index=True)

@@ -128,18 +128,18 @@ class TestMcpEnabledModels(TransactionCase):
             )
 
     def test_internal_model_cannot_be_enabled(self):
-        """An ``mcp.*`` model (e.g. the OAuth token table) cannot be enabled.
+        """An ``mcp.*`` model (e.g. the API key table) cannot be enabled.
 
         ``_check_model_not_internal`` blocks exposing the module's own models
-        over MCP -- surfacing e.g. ``mcp.oauth.token`` would leak token hashes.
+        over MCP -- surfacing e.g. ``mcp.api.key`` would leak key hashes.
         The guard must hold on a direct create/RPC, independent of the wizard's
         UI filter which only hides these models from the picker.
         """
         internal_model = self.env["ir.model"].search(
-            [("model", "=", "mcp.oauth.token")], limit=1
+            [("model", "=", "mcp.api.key")], limit=1
         )
         self.assertTrue(
-            internal_model, "mcp.oauth.token ir.model should exist in this module"
+            internal_model, "mcp.api.key ir.model should exist in this module"
         )
         with self.assertRaises(ValidationError):
             self.env["mcp.enabled.model"].create(

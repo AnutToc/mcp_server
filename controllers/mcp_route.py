@@ -1,32 +1,23 @@
-"""Route decorator preset for native MCP protocol endpoints.
+"""Route decorator preset for native MCP protocol endpoints (Odoo 13).
 
-Thin wrapper over :func:`odoo.http.route` that pins the routing options every
-``/mcp/*`` JSON-RPC endpoint needs, so individual handlers only declare their
-path and HTTP methods.
+Pins type='http' and auth='none' for stateless JSON-RPC endpoints.
 """
 
 from odoo import http
 
-# Per-route request-body ceiling for the JSON-RPC control plane. Far below the
-# framework default (128 MiB) so a single authenticated client cannot make the
-# worker buffer and parse an outsized body, yet generous enough for legitimate
-# tool calls (including base64 payloads). Enforced in MCPDispatcher.pre_dispatch.
 MCP_MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MiB
 
 
 def mcp_route(*args, **kwargs):
-    """Bind a route served by the custom ``type='mcp'`` dispatcher.
+    """Bind a route for MCP in Odoo 13.
 
-    Pins ``type='mcp'`` / ``auth='mcp'`` and the transport defaults; callers
-    still pass the path and ``methods``. Each option is set as a default, so an
-    endpoint may override it when genuinely needed.
+    Pins type='http' / auth='none' with manual authentication, CORS and JSON
+    handling in the controller. Removes v16+ kwargs (save_session, max_content_length).
     """
-    kwargs.setdefault("type", "mcp")
-    kwargs.setdefault("auth", "mcp")
-    # csrf=False: machine-to-machine JSON-RPC endpoint authenticated by a bearer
-    # API key (auth='mcp'); there is no browser session/cookie to forge.
+    kwargs.setdefault("type", "http")
+    kwargs.setdefault("auth", "none")
     kwargs.setdefault("csrf", False)
-    kwargs.setdefault("save_session", False)
     kwargs.setdefault("cors", "*")
-    kwargs.setdefault("max_content_length", MCP_MAX_CONTENT_LENGTH)
+    kwargs.pop("max_content_length", None)
+    kwargs.pop("save_session", None)
     return http.route(*args, **kwargs)

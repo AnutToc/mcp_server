@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from odoo.http import request
+from ..compat import make_json_response
 
 # Standard error codes
 ERROR_CODES = {
@@ -47,7 +47,7 @@ def success_response(data, meta=None):
         "Content-Type": "application/json",
     }
 
-    return request.make_json_response(payload, headers=headers)
+    return make_json_response(payload, headers=headers)
 
 
 def error_response(message, code=None, status=400, meta=None):
@@ -77,4 +77,4 @@ def error_response(message, code=None, status=400, meta=None):
         "Content-Type": "application/json",
     }
 
-    return request.make_json_response(payload, status=status, headers=headers)
+    return make_json_response(payload, status=status, headers=headers)

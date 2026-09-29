@@ -40,7 +40,11 @@ from .test_helpers import (
     grant_mcp_access,
     users_groups_field,
 )
-from .test_oauth import _sha256_hex
+import hashlib
+
+
+def _sha256_hex(data):
+    return hashlib.sha256(data.encode()).hexdigest()
 
 # A code action that echoes its ``x`` argument back through the shared dict.
 _ECHO_CODE = "mcp['result'] = {'echo': mcp['args'].get('x')}"
@@ -282,23 +286,7 @@ class TestCustomTools(UrlOpenCompatMixin, common.HttpCase):
 
         params = self.env["ir.config_parameter"].sudo()
         params.set_param("mcp_server.enabled", "True")
-        params.set_param("mcp_server.enable_logging", "True")
-        params.set_param("mcp_server.enable_oauth", "True")
         utils.clear_mcp_caches()
-
-        # OAuth audience the AS derives from the request host (RFC 8707); a token's
-        # audience must equal this to be accepted at /mcp.
-        self.resource = self.base_url() + "/mcp"
-        self.oauth_client = (
-            self.env["mcp.oauth.client"]
-            .sudo()
-            .create(
-                {
-                    "client_id": f"custom-tool-client-{unique_id}",
-                    "redirect_uris": "http://127.0.0.1:8765/callback",
-                }
-            )
-        )
 
     # ------------------------------------------------------------------
     # Fixture helpers
@@ -340,22 +328,6 @@ class TestCustomTools(UrlOpenCompatMixin, common.HttpCase):
                 "is_readonly": is_readonly,
             }
         )
-
-    def _mint_oauth_token(self, scope):
-        """Craft a live OAuth access token row (for ``self.user_in``); return the
-        raw bearer."""
-        raw = secrets.token_urlsafe(48)
-        self.env["mcp.oauth.token"].sudo().create(
-            {
-                "access_token_hash": _sha256_hex(raw),
-                "client": self.oauth_client.id,
-                "user_id": self.user_in.id,
-                "scope": scope,
-                "audience": self.resource,
-                "access_expires_at": fields.Datetime.now() + timedelta(hours=1),
-            }
-        )
-        return raw
 
     # ------------------------------------------------------------------
     # RPC helpers
@@ -587,30 +559,6 @@ class TestCustomTools(UrlOpenCompatMixin, common.HttpCase):
         self.assertNotIn("Traceback", text)
 
     # ------------------------------------------------------------------
-    # Scope interplay: an mcp:read OAuth session may call read-only tools only
-    # ------------------------------------------------------------------
-    def test_read_scope_blocks_write_tool_allows_readonly_tool(self):
-        """Over an mcp:read token: a write custom tool is blocked, a read-only one runs."""
-        token = self._mint_oauth_token("mcp:read")
-
-        names = self._list_tool_names(token)
-        # is_readonly=False custom tool is hidden from a read-only session...
-        self.assertNotIn("echo_grouped", names)
-        # ...and is_readonly=True custom tool stays visible.
-        self.assertIn("echo_readonly", names)
-
-        denied = self._call_tool(token, "echo_grouped", {"x": "nope"})
-        self.assertTrue(denied["isError"], msg=denied)
-        self.assertIn("read-only", denied["content"][0]["text"].lower())
-        self.assertNotIn("Traceback", denied["content"][0]["text"])
-
-        allowed = self._call_tool(token, "echo_readonly", {"x": "yes"})
-        self.assertFalse(allowed["isError"], msg=allowed)
-        self.assertEqual(
-            json.loads(allowed["content"][0]["text"]), {"echo": "yes"}
-        )
-
-    # ------------------------------------------------------------------
     # Audit: a custom-tool call writes an mcp.log row (operation = tool name)
     # ------------------------------------------------------------------
     def test_custom_tool_call_writes_audit_row(self):
@@ -737,15 +685,8 @@ class TestCustomTools(UrlOpenCompatMixin, common.HttpCase):
     # and controller-side for internal users by
     # test_non_admin_internal_key_lists_builtins_without_model_read.
     # ------------------------------------------------------------------
-    def test_portal_oauth_token_refused_at_door_with_403(self):
-        """A live OAuth token bound to a portal user is refused with 403.
-
-        Even a token whose action group_ids would authorize the wrapped tool:
-        the per-user MCP opt-in gate (mcp_server.group_mcp_user) runs before any
-        tool dispatch, and portal users cannot be members. 403 -- not 401 --
-        so a spec-following client surfaces the error instead of looping
-        through a re-auth that would only mint another refused token.
-        """
+    def test_portal_api_key_refused_at_door_with_403(self):
+        """A live API key bound to a portal user is refused with 403."""
         unique_id = str(int(time.time() * 1000))[-6:]
         groups_field = users_groups_field(self.env)
         portal_group = self.env.ref("base.group_portal")
@@ -764,18 +705,7 @@ class TestCustomTools(UrlOpenCompatMixin, common.HttpCase):
             group_ids=[(6, 0, [portal_group.id])],
             is_readonly=True,
         )
-        # A live OAuth access token bound to the portal user (mcp:read).
-        raw = secrets.token_urlsafe(48)
-        self.env["mcp.oauth.token"].sudo().create(
-            {
-                "access_token_hash": _sha256_hex(raw),
-                "client": self.oauth_client.id,
-                "user_id": portal.id,
-                "scope": "mcp:read",
-                "audience": self.resource,
-                "access_expires_at": fields.Datetime.now() + timedelta(hours=1),
-            }
-        )
+        raw = self._mint_key(portal, "Portal Key")
 
         response = self._rpc(raw, "tools/list")
         self.assertEqual(response.status_code, 403, response.text[:500])

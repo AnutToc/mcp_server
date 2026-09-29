@@ -69,7 +69,7 @@ class McpEnabledModel(models.Model):
 
         Mirrors the wizard's ``("model", "not like", "mcp.%")`` exclusion at the
         model level so the guard also holds for a direct form/RPC create/write --
-        exposing e.g. ``mcp.oauth.token`` would surface token hashes over MCP.
+        exposing e.g. ``mcp.api.key`` would surface key hashes over MCP.
         """
         for record in self:
             technical_name = record.model_id.model
@@ -77,9 +77,8 @@ class McpEnabledModel(models.Model):
                 raise ValidationError(
                     _(
                         "The model '%(name)s' is internal to the MCP server and "
-                        "cannot be exposed for MCP access.",
-                        name=technical_name,
-                    )
+                        "cannot be exposed for MCP access."
+                    ) % {"name": technical_name}
                 )
 
     # ------------------------------------------------------------------
@@ -102,17 +101,10 @@ class McpEnabledModel(models.Model):
         return result
 
     def _invalidate_mcp_caches(self):
-        """Drop the MCP permission caches so config changes take effect.
+        """Drop the MCP permission caches so config changes take effect."""
+        from ..compat import clear_registry_cache
+        clear_registry_cache(self.env.registry)
 
-        Every MCP decision -- the per-model enablement/operation/method-call
-        gates AND the global on/off switches (``_get_mcp_enabled`` /
-        ``_get_oauth_enabled`` / ``_get_allowed_origins``) -- is
-        ``@ormcache``-decorated, so ``registry.clear_cache`` invalidates them all
-        AND signals the other HTTP workers to do the same via registry signaling.
-        A disabled model (or a flipped master switch) stops being served
-        everywhere on the next request, not after a TTL.
-        """
-        self.env.registry.clear_cache()
 
     # ------------------------------------------------------------------
     # Global on/off switches (@ormcache-d, cross-worker-invalidated)
@@ -188,7 +180,7 @@ class McpEnabledModel(models.Model):
         """Check if a specific operation is enabled for a model (``@ormcache``-d)."""
         if operation not in ["read", "create", "write", "unlink"]:
             raise ValidationError(
-                _("Invalid operation: %(operation)s", operation=operation)
+                _("Invalid operation: %(operation)s") % {"operation": operation}
             )
 
         record = self.search(
