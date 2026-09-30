@@ -8,7 +8,10 @@ names or memory addresses to clients.
 import logging
 import re
 
-from psycopg2 import errors as pg_errors
+try:
+    from psycopg2 import errors as pg_errors
+except ImportError:
+    from ..compat import pg_errors
 
 from odoo import _
 from odoo.exceptions import AccessError, MissingError, UserError, ValidationError

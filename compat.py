@@ -28,6 +28,72 @@ from odoo.http import request, Response
 _logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────
+# 0. psycopg2.errors compatibility (psycopg2 < 2.8 on Debian/Ubuntu/Odoo 13)
+# ──────────────────────────────────────────────────────────────
+import sys
+import types
+import psycopg2
+
+try:
+    from psycopg2 import errors as pg_errors
+except ImportError:
+    class _PgCodeMeta(type):
+        """Metaclass that matches isinstance(exc, ViolationClass) by pgcode."""
+
+        def __instancecheck__(cls, instance):
+            if super().__instancecheck__(instance):
+                return True
+            expected_code = getattr(cls, "pgcode", None)
+            return bool(
+                expected_code and getattr(instance, "pgcode", None) == expected_code
+            )
+
+    class _UniqueViolation(psycopg2.IntegrityError, metaclass=_PgCodeMeta):
+        pgcode = "23505"
+
+    class _NotNullViolation(psycopg2.IntegrityError, metaclass=_PgCodeMeta):
+        pgcode = "23502"
+
+    class _ForeignKeyViolation(psycopg2.IntegrityError, metaclass=_PgCodeMeta):
+        pgcode = "23503"
+
+    class _CheckViolation(psycopg2.IntegrityError, metaclass=_PgCodeMeta):
+        pgcode = "23514"
+
+    class _RestrictViolation(psycopg2.IntegrityError, metaclass=_PgCodeMeta):
+        pgcode = "23001"
+
+    class _ExclusionViolation(psycopg2.IntegrityError, metaclass=_PgCodeMeta):
+        pgcode = "23P01"
+
+    class _SerializationFailure(psycopg2.OperationalError, metaclass=_PgCodeMeta):
+        pgcode = "40001"
+
+    class _DeadlockDetected(psycopg2.OperationalError, metaclass=_PgCodeMeta):
+        pgcode = "40P01"
+
+    class _PgErrorsModule(types.ModuleType):
+        UniqueViolation = _UniqueViolation
+        NotNullViolation = _NotNullViolation
+        ForeignKeyViolation = _ForeignKeyViolation
+        CheckViolation = _CheckViolation
+        RestrictViolation = _RestrictViolation
+        ExclusionViolation = _ExclusionViolation
+        SerializationFailure = _SerializationFailure
+        DeadlockDetected = _DeadlockDetected
+        Error = psycopg2.Error
+        DatabaseError = psycopg2.DatabaseError
+        IntegrityError = psycopg2.IntegrityError
+        OperationalError = psycopg2.OperationalError
+        ProgrammingError = psycopg2.ProgrammingError
+        DataError = psycopg2.DataError
+        InternalError = psycopg2.InternalError
+
+    pg_errors = _PgErrorsModule("psycopg2.errors")
+    psycopg2.errors = pg_errors
+    sys.modules["psycopg2.errors"] = pg_errors
+
+# ──────────────────────────────────────────────────────────────
 # 1. HTTP Response helpers
 #    v18: request.make_json_response(data, headers=..., status=200)
 #    v13: does not exist → build a werkzeug Response manually

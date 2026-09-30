@@ -212,7 +212,11 @@ class TestMcpWriteTools(common.HttpCase):
         once the exception reaches it; it is not re-exercised under the HttpCase
         test cursor (a synthetic error carries no ``pgcode`` to loop on).
         """
-        from psycopg2.errors import SerializationFailure
+        try:
+            from psycopg2.errors import SerializationFailure
+        except ImportError:
+            from ..compat import pg_errors
+            SerializationFailure = pg_errors.SerializationFailure
 
         mixin_cls = type(self.env["mcp.mixin"])
         boom = MagicMock(side_effect=SerializationFailure("could not serialize access"))
