@@ -142,6 +142,7 @@ class MCPController(http.Controller):
         methods=["POST", "OPTIONS"],
         csrf=False,
         cors="*",
+        save_session=False,
     )
     def handle_rpc(self, **kwargs):
         """Validate the JSON-RPC envelope and dispatch on ``method`` (Odoo 13)."""

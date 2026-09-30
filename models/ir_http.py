@@ -3,12 +3,15 @@
 Adds custom authentication and error handling for MCP routes.
 """
 
+import logging
 import re
 
 from werkzeug.exceptions import Forbidden, HTTPException, Unauthorized
 
 from odoo import models
-from odoo.http import request
+from odoo.http import request, Response
+
+_logger = logging.getLogger(__name__)
 
 from ..compat import (
     disable_session_save,
@@ -107,6 +110,7 @@ class IrHttp(models.AbstractModel):
     def _handle_exception(cls, exception):
         """Render internal errors on MCP routes as JSON-RPC ``-32603``."""
         if cls._is_mcp_request() and not isinstance(exception, HTTPException):
+            _logger.exception("MCP Internal Error: %s", exception)
             return make_json_response(
                 jsonrpc.make_error(
                     None,
@@ -121,6 +125,30 @@ class IrHttp(models.AbstractModel):
         """Whether the current request is an MCP request."""
         try:
             path = request.httprequest.path or ""
-            return path.startswith("/mcp")
+            return path == "/mcp" or path.startswith("/mcp/")
         except Exception:
             return False
+
+    @classmethod
+    def _dispatch(cls):
+        """Route MCP requests cleanly regardless of incoming Content-Type (Odoo 13)."""
+        if cls._is_mcp_request():
+            try:
+                rule, arguments = cls._match(request.httprequest.path)
+                func = rule.endpoint
+                auth_method = cls._authenticate(func.routing["auth"])
+                request.set_handler(func, arguments, auth_method)
+                orig_type = request._request_type
+                request._request_type = func.routing.get("type", "http")
+                try:
+                    result = request._call_function(**request.params)
+                    if not result:
+                        result = Response(status=204)
+                    return result
+                finally:
+                    request._request_type = orig_type
+            except Exception as e:
+                return cls._handle_exception(e)
+
+        return super()._dispatch()
+

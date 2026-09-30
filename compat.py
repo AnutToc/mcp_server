@@ -138,6 +138,8 @@ def get_json_data():
     :return: parsed JSON object
     :raises ValueError: when the body is not valid JSON
     """
+    if getattr(request, "jsonrequest", None) is not None:
+        return request.jsonrequest
     raw = request.httprequest.get_data(as_text=True)
     return json.loads(raw)
 
@@ -154,37 +156,46 @@ def update_request_env(uid):
 
     Replaces ``request.update_env(user=uid)`` (Odoo 16+).
 
-    In Odoo 13, ``request.env`` is rebuilt by assigning ``request.uid``
-    and then accessing ``request.env`` (which lazily builds a new
-    Environment). ``request.session.should_save`` is set to ``False``
-    so the stateless MCP auth does not persist a session cookie.
+    In Odoo 13, assigning ``request.uid = uid`` automatically sets
+    ``request._env = None``. The next access to ``request.env`` lazily
+    builds a new Environment with the new uid.
     """
     request.uid = uid
-    # Force env rebuild on next access
-    if hasattr(request, '_env'):
-        del request._env
+    request._env = None
 
 
 def update_request_context(**kwargs):
     """Merge extra keys into the request's context dict (v13).
 
     Replaces ``request.update_context(**kwargs)`` (Odoo 16+).
-    In v13 we replace ``request.env.context`` with a new dict.
+    In v13 assigning ``request.context = ctx`` automatically sets
+    ``request._env = None``.
     """
-    ctx = dict(request.env.context or {}, **kwargs)
-    request.env = request.env(context=ctx)
+    ctx = dict(request.context or {}, **kwargs)
+    request.context = ctx
+    request._env = None
 
 
 def disable_session_save():
     """Prevent the session from being saved (v13-compatible).
 
-    Replaces ``request.session.can_save = False`` (v16+).
-    In v13 the flag is called ``should_save``.
+    In v16+ the flag is ``request.session.can_save = False``.
+    In v13 ``should_save`` is a read-only property returning ``self.modified``,
+    so we set ``self.modified = False`` and ``self.can_save = False`` if writable.
     """
-    if hasattr(request.session, 'should_save'):
-        request.session.should_save = False
-    elif hasattr(request.session, 'can_save'):
-        request.session.can_save = False
+    session = getattr(request, "session", None)
+    if not session:
+        return
+    if hasattr(session, "can_save"):
+        try:
+            session.can_save = False
+        except (AttributeError, TypeError):
+            pass
+    if hasattr(session, "modified"):
+        try:
+            session.modified = False
+        except (AttributeError, TypeError):
+            pass
 
 
 # ──────────────────────────────────────────────────────────────
