@@ -21,11 +21,34 @@
         <field name="model">mcp.api.key</field>
         <field name="arch" type="xml">
             <form string="MCP API Key">
+                <header>
+                    <button
+                        name="%(mcp_server.action_mcp_api_key_wizard)d"
+                        string="Generate New Key"
+                        type="action"
+                        class="btn-primary"
+                    />
+                </header>
                 <sheet>
                     <div class="oe_button_box" name="button_box" />
+                    <field name="key_hash" invisible="1" force_save="1" />
+                    <div
+                        class="alert alert-warning"
+                        role="alert"
+                        attrs="{'invisible': [('raw_key', '=', False)]}"
+                    >
+                        <strong>Important:</strong> Please copy your API key now. It will only be visible while creating this record and cannot be retrieved once saved!
+                    </div>
+                    <group attrs="{'invisible': [('raw_key', '=', False)]}">
+                        <field
+                            name="raw_key"
+                            widget="CopyClipboardChar"
+                            readonly="1"
+                        />
+                    </group>
                     <group>
                         <group>
-                            <field name="name" />
+                            <field name="name" placeholder="e.g. Claude Desktop, Cursor..." />
                             <field name="user_id" />
                         </group>
                         <group>
@@ -97,5 +120,7 @@
         <field name="res_model">mcp.api.key.wizard</field>
         <field name="view_mode">form</field>
         <field name="target">new</field>
+        <field name="binding_model_id" ref="model_mcp_api_key" />
+        <field name="binding_view_types">list</field>
     </record>
 </odoo>

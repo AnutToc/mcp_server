@@ -25,6 +25,12 @@ class McpApiKey(models.Model):
         ondelete="cascade",
         default=lambda self: self.env.user,
     )
+    raw_key = fields.Char(
+        "Generated API Key",
+        store=False,
+        readonly=True,
+        help="Copy this key now. It is only shown once during creation.",
+    )
     key_hash = fields.Char("Key Hash", required=True, index=True, copy=False)
     scope = fields.Selection(
         [
@@ -39,6 +45,22 @@ class McpApiKey(models.Model):
         "- MCP only: authenticates ONLY on /mcp.",
     )
     active = fields.Boolean(default=True)
+
+    @api.model
+    def default_get(self, fields_list):
+        res = super().default_get(fields_list)
+        raw = secrets.token_urlsafe(48)
+        res["raw_key"] = raw
+        res["key_hash"] = hashlib.sha256(raw.encode()).hexdigest()
+        return res
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        for vals in vals_list:
+            if not vals.get("key_hash"):
+                raw = secrets.token_urlsafe(48)
+                vals["key_hash"] = hashlib.sha256(raw.encode()).hexdigest()
+        return super().create(vals_list)
 
     @api.model
     def generate_key(self, name, user_id=None, scope="global"):

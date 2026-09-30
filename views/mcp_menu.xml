@@ -44,6 +44,15 @@
     />
 
     <menuitem
+        id="menu_mcp_generate_api_key"
+        name="Generate API Key"
+        parent="mcp_menu_technical"
+        action="action_mcp_api_key_wizard"
+        sequence="35"
+        groups="mcp_server.group_mcp_admin"
+    />
+
+    <menuitem
         id="menu_mcp_custom_tools"
         name="Custom Tools"
         parent="mcp_menu_technical"
