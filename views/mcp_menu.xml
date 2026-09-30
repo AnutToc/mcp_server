@@ -17,6 +17,15 @@
     />
 
     <menuitem
+        id="menu_mcp_model_selection_wizard"
+        name="Select Multiple Models"
+        parent="mcp_menu_technical"
+        action="action_mcp_model_selection_wizard"
+        sequence="15"
+        groups="mcp_server.group_mcp_admin"
+    />
+
+    <menuitem
         id="menu_mcp_logs"
         name="MCP Logs"
         parent="mcp_menu_technical"

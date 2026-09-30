@@ -43,6 +43,15 @@
                                     </div>
                                     <div class="mt8">
                                         <button
+                                            name="%(mcp_server.action_mcp_model_selection_wizard)d"
+                                            icon="fa-plus-circle"
+                                            type="action"
+                                            string="Select Multiple Models"
+                                            class="btn-link"
+                                        />
+                                    </div>
+                                    <div class="mt8">
+                                        <button
                                             name="%(mcp_server.action_mcp_custom_tool)d"
                                             icon="fa-arrow-right"
                                             type="action"

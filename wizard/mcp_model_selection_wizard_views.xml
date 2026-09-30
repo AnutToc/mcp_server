@@ -48,4 +48,13 @@
         <field name="target">new</field>
         <field name="binding_model_id" ref="base.model_ir_model" />
     </record>
+
+    <record id="action_mcp_model_selection_wizard_from_enabled" model="ir.actions.act_window">
+        <field name="name">Select Multiple Models</field>
+        <field name="res_model">mcp.model.selection.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <field name="binding_model_id" ref="model_mcp_enabled_model" />
+        <field name="binding_view_types">list</field>
+    </record>
 </odoo>
