@@ -35,10 +35,9 @@ class UrlOpenCompatMixin:
     @contextlib.contextmanager
     def allow_requests(self, browser=None, all_requests=False):
         """v19 ``HttpCase.allow_requests``: releases the test lock and rotates
-        the request key for a request made outside ``url_open``. v18 has no
-        test lock and ``http_request_key`` is the plain ``canonical_tag``, so a
-        client only needs the ``TEST_CURSOR_COOKIE_NAME`` cookie -- nothing to
-        set up or tear down here.
+        the request key for a request made outside ``url_open``. In this v18
+        build ``HttpCase`` runs the registry in test mode, where every request
+        shares the test cursor, so there is nothing to set up or tear down.
         """
         yield
 

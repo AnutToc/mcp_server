@@ -332,12 +332,13 @@ working.
 
 ### Available Tools
 
-The endpoint exposes 17 built-in tools (plus any admin-defined
+The endpoint exposes 18 built-in tools (plus any admin-defined
 [Custom Tools](#custom-tools)):
 
 | Tool                      | Operation   | Description                                              |
 | ------------------------- | ----------- | -------------------------------------------------------- |
 | `search_records`          | read        | Search records with smart field selection and pagination |
+| `search_read_many`        | read        | Run several independent searches across models in one call |
 | `get_record`              | read        | Fetch one record by ID, formatted for LLMs               |
 | `get_fields`              | read        | Describe a model's fields (type, label, relation, etc.)  |
 | `list_models`             | read        | List the MCP-enabled models                              |
@@ -355,11 +356,20 @@ The endpoint exposes 17 built-in tools (plus any admin-defined
 | `call_model_method`       | method call | Call a public business method (opt-in per model)         |
 | `post_message`            | write       | Post a message to a record's chatter                     |
 
-`search_records` is also the batch read path. One call with a domain such as
-`[["id", "in", [1, 2, 3]]]` fetches many records at once. A larger `limit` (up to
-the configured maximum) reads a big result set in few calls. The tool descriptions
-and the `initialize` instructions steer AI clients toward this pattern instead of
-one `get_record` call per record.
+`search_records` is also the batch read path for a single model. One call with a
+domain such as `[["id", "in", [1, 2, 3]]]` fetches many records at once. A larger
+`limit` (up to the configured maximum) reads a big result set in few calls. The tool
+descriptions and the `initialize` instructions steer AI clients toward this pattern
+instead of one `get_record` call per record.
+
+`search_read_many` batches **independent** reads across models into one call: pass
+up to 10 query objects, each with its own `model`, `domain`, `fields`, `limit`,
+`offset` and `order`, and receive one formatted block per query key. Queries cannot
+reference each other, so a cross-model chain uses two calls — first the anchor
+records, then the related records filtered by the ids or names from the first
+result. A failing query returns an `ERROR` block for its key without failing the
+others, and each query is gated by the same per-model MCP read permissions as
+`search_records`.
 
 `get_fields` returns a curated subset of the schema by default: the most relevant
 fields (at most 60) with selection lists cut at 20 options. The result names how many

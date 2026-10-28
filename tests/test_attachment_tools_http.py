@@ -30,7 +30,6 @@ from urllib.parse import parse_qsl, urlsplit
 import requests
 
 from odoo.tests import common, tagged
-from odoo.tests.common import TEST_CURSOR_COOKIE_NAME
 from odoo.tools.misc import limited_field_access_token
 
 from ..controllers import mcp, oauth_server, rate_limiting, utils
@@ -184,12 +183,15 @@ class TestAttachmentToolsHttp(UrlOpenCompatMixin, common.HttpCase):
         }
 
     def _anonymous_get(self, url):
-        """GET ``url`` with a cookie-less client (plus the test-cursor key)."""
+        """GET ``url`` with a cookie-less client.
+
+        ``HttpCase`` puts the registry in test mode, where every request runs
+        on the same test cursor, so no cursor cookie is needed.
+        """
         self.cr.flush()
         self.cr.clear()
         with self.allow_requests():
             anonymous = requests.Session()
-            anonymous.cookies.set(TEST_CURSOR_COOKIE_NAME, self.http_request_key)
             return anonymous.get(url, timeout=10)
 
     def _last_log(self, tool_name):
