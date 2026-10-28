@@ -288,10 +288,11 @@ Features
 Built-in Tools
 ~~~~~~~~~~~~~~
 
-The ``/mcp`` endpoint exposes 17 built-in tools — nine read tools
-(``search_records``, ``get_record``, ``get_fields``, ``list_models``,
-``aggregate_records``, ``read_attachment``, ``list_record_attachments``,
-``list_resource_templates``, ``get_current_context``) and eight
+The ``/mcp`` endpoint exposes 18 built-in tools — ten read tools
+(``search_records``, ``search_read_many``, ``get_record``, ``get_fields``,
+``list_models``, ``aggregate_records``, ``read_attachment``,
+``list_record_attachments``, ``list_resource_templates``,
+``get_current_context``) and eight
 write tools (``create_record``, ``create_records``, ``update_record``,
 ``update_records``, ``delete_record``, ``upload_attachment``, ``post_message``,
 ``call_model_method`` — the latter an admin opt-in per model). ``create_records`` and ``update_records`` write many

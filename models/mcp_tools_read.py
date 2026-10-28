@@ -2,8 +2,9 @@
 
 Contributes the read tools to :class:`McpMixin` via ``_inherit = 'mcp.mixin'``:
 ``list_models``, ``get_record``, ``get_fields``, ``search_records``,
-``aggregate_records``, ``read_attachment``, ``list_record_attachments``,
-``list_resource_templates`` and ``get_current_context``.
+``search_read_many``, ``aggregate_records``, ``read_attachment``,
+``list_record_attachments``, ``list_resource_templates`` and
+``get_current_context``.
 The LLM-friendly text output reuses the
 ``tools.formatters`` / ``tools.uri_schema`` / ``tools.smart_fields`` helpers.
 
@@ -71,6 +72,10 @@ _SELECTION_OPTIONS_CAP = 20
 # Bound the offset to this many max-size pages -- generous for real paging, but
 # it stops an ``offset=999999999`` forcing an unbounded skip.
 MAX_OFFSET_PAGES = 1000
+
+# ``search_read_many`` cap: each query carries its own limit, so this bounds the
+# total work in one call (worst case: queries x configured max limit rows).
+MAX_BATCH_QUERIES = 10
 
 # Fallback for the maximum number of related records rendered inline by
 # ``get_record`` (live value: ``mcp_server.max_related_items``). Kept low: each
@@ -787,7 +792,28 @@ class McpToolsRead(models.AbstractModel):
         """Search records and format the page for LLM consumption."""
         model_rs = self._resolve_model(model)
         self._check_op(model, "read")
+        text, structured, binary_swapped = self._search_read_page(
+            model, model_rs, domain, fields, limit, offset, order
+        )
+        if binary_swapped:
+            text = _append_binary_note(text, structured)
+        return _tool_result(text, structured)
 
+    def _search_read_page(
+        self,
+        model,
+        model_rs,
+        domain=None,
+        fields=None,
+        limit=None,
+        offset=0,
+        order=None,
+    ):
+        """Search one page and format it; shared by both read tools.
+
+        The caller has already applied the MCP model and operation gates.
+        Returns ``(text, structured, binary_swapped)``.
+        """
         parsed_domain = self._coerce_domain(domain)
         limit = self._effective_limit(limit)
         offset = self._effective_offset(offset)
@@ -864,9 +890,185 @@ class McpToolsRead(models.AbstractModel):
             "offset": offset,
             "model": model,
         }
-        if binary_swapped:
-            text = _append_binary_note(text, structured)
-        return _tool_result(text, structured)
+        return text, structured, binary_swapped
+
+    # ------------------------------------------------------------------
+    # search_read_many
+    # ------------------------------------------------------------------
+    @mcp_tool(
+        name="search_read_many",
+        title="Search/Read Many",
+        description=(
+            "Run up to 10 independent searches in one call, each against its "
+            "own model, and get one formatted block per query. Use this to cut "
+            "round trips when a question needs data from several models: first "
+            "call it for the anchor records, then call it again with the ids or "
+            "names from that result to fetch the related records. Queries are "
+            "independent -- one query cannot reference another's result -- and "
+            "each has its own domain/fields/limit/offset/order. A failing query "
+            "returns an ERROR block under its key without failing the others."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "queries": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": MAX_BATCH_QUERIES,
+                    "description": (
+                        "Independent read queries. Each becomes one result block "
+                        "keyed by its 'key' (defaults to q1, q2, ...)."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {
+                                "type": "string",
+                                "description": "Optional block name; must be unique.",
+                            },
+                            "model": {
+                                "type": "string",
+                                "description": "Technical model name.",
+                            },
+                            "domain": {
+                                "type": ["array", "string", "null"],
+                                "description": (
+                                    "Odoo domain filter as a list or JSON string. "
+                                    "Omit for all records."
+                                ),
+                            },
+                            "fields": {
+                                "type": ["array", "string", "null"],
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Field selection: omit/null for smart "
+                                    "defaults, a list of field names, or "
+                                    '["__all__"] for all fields.'
+                                ),
+                            },
+                            "limit": {
+                                "type": ["integer", "null"],
+                                "description": (
+                                    "Max records for this query. Uses the "
+                                    "configured default when omitted and is "
+                                    "capped by the configured maximum."
+                                ),
+                            },
+                            "offset": {
+                                "type": "integer",
+                                "default": 0,
+                                "description": "Number of records to skip.",
+                            },
+                            "order": {
+                                "type": ["string", "null"],
+                                "description": "Sort order, e.g. 'name asc'.",
+                            },
+                        },
+                        "required": ["model"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["queries"],
+            "additionalProperties": False,
+        },
+        # Multi-model: no single operation gate; each query is gated inside.
+        operation=None,
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+    @api.model
+    def search_read_many(self, queries):
+        """Run several independent searches and return one block per query."""
+        parsed_queries = self._coerce_many_queries(queries)
+        results = {}
+        errors = {}
+        blocks = []
+        for query in parsed_queries:
+            key = query["key"]
+            model = query["model"]
+            header = "========== %s (%s) ==========" % (key, model)
+            try:
+                model_rs = self._resolve_model(model)
+                self._check_op(model, "read")
+                text, structured, binary_swapped = self._search_read_page(
+                    model,
+                    model_rs,
+                    query.get("domain"),
+                    query.get("fields"),
+                    query.get("limit"),
+                    query.get("offset") or 0,
+                    query.get("order"),
+                )
+                if binary_swapped:
+                    text = _append_binary_note(text, structured)
+                results[key] = structured
+                blocks.append(header + "\n" + text)
+            except (AccessError, UserError, MissingError, ValueError) as err:
+                # Per-query isolation: one bad query (model not enabled, ACL,
+                # malformed domain/fields) must not discard the usable results
+                # from the other queries. Cap the message so a long ORM error
+                # cannot flood the response.
+                message = str(err)[:500]
+                errors[key] = message
+                blocks.append(header + "\nERROR: " + message)
+
+        structured = {"results": results}
+        if errors:
+            structured["errors"] = errors
+        return _tool_result("\n\n".join(blocks), structured)
+
+    def _coerce_many_queries(self, queries):
+        """Validate the ``queries`` argument and assign unique keys.
+
+        Structural problems (not a list, empty, too many, a non-object entry,
+        a missing model or duplicate key) reject the whole call: the client can
+        fix them before anything runs. Runtime problems (model not enabled,
+        ACL, bad domain) are isolated per query in :meth:`search_read_many`.
+        """
+        if isinstance(queries, str):
+            try:
+                queries = json.loads(queries)
+            except ValueError as err:
+                raise UserError(_("'queries' must be valid JSON.")) from err
+        if not isinstance(queries, (list, tuple)):
+            raise UserError(_("'queries' must be a list of query objects."))
+        if not queries:
+            raise UserError(_("'queries' must contain at least one query."))
+        if len(queries) > MAX_BATCH_QUERIES:
+            raise UserError(
+                _(
+                    "Too many queries in one call: %(count)s. The maximum is "
+                    "%(max)s; split them into smaller batches."
+                )
+                % {"count": len(queries), "max": MAX_BATCH_QUERIES}
+            )
+
+        cleaned = []
+        seen = set()
+        for index, query in enumerate(queries, start=1):
+            if not isinstance(query, dict):
+                raise UserError(
+                    _("Query %(index)s must be an object.") % {"index": index}
+                )
+            model = query.get("model")
+            if not isinstance(model, str) or not model.strip():
+                raise UserError(
+                    _("Query %(index)s is missing a 'model'.") % {"index": index}
+                )
+            key = query.get("key") or "q%s" % index
+            if not isinstance(key, str) or not key.strip():
+                raise UserError(
+                    _("Query %(index)s has an invalid 'key'.") % {"index": index}
+                )
+            key = key.strip()
+            if key in seen:
+                raise UserError(_("Duplicate query key '%s'.") % (key,))
+            seen.add(key)
+            cleaned.append({**query, "key": key, "model": model.strip()})
+        return cleaned
 
     # ------------------------------------------------------------------
     # aggregate_records

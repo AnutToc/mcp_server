@@ -4,8 +4,9 @@ Exercises the read-side tool layer wired onto ``mcp.mixin`` and served through
 ``POST /mcp``:
 
 * ``tools/list`` advertises the read tools (``list_models`` / ``get_record`` /
-  ``get_fields`` / ``search_records`` / ``aggregate_records`` /
-  ``list_resource_templates``) with their JSON-Schema ``inputSchema``.
+  ``get_fields`` / ``search_records`` / ``search_read_many`` /
+  ``aggregate_records`` / ``list_resource_templates``) with their JSON-Schema
+  ``inputSchema``.
 * ``tools/call search_records`` returns smart-field selection + LLM-formatted
   text + ``structuredContent`` with pagination info.
 * Access control: a non-enabled model is refused (``isError``, no traceback) and
@@ -29,7 +30,7 @@ from odoo.exceptions import AccessError, MissingError
 from odoo.tests import common, tagged
 
 from ..controllers import rate_limiting, utils
-from ..models.mcp_tools_read import DEFAULT_LIMIT, MAX_LIMIT
+from ..models.mcp_tools_read import DEFAULT_LIMIT, MAX_BATCH_QUERIES, MAX_LIMIT
 from ..tools.smart_fields import DEFAULT_MAX_SMART_FIELDS
 from .test_helpers import create_test_user, grant_mcp_access, users_groups_field
 
@@ -44,6 +45,7 @@ READ_TOOL_NAMES = {
     "get_record",
     "get_fields",
     "search_records",
+    "search_read_many",
     "aggregate_records",
     "list_resource_templates",
 }
@@ -226,6 +228,10 @@ class TestMcpReadTools(common.HttpCase):
         self.assertIn("model", search_schema["required"])
         for arg in ("model", "domain", "fields", "limit", "offset", "order"):
             self.assertIn(arg, search_schema["properties"])
+        # search_read_many requires only the queries array.
+        self.assertEqual(
+            set(tools["search_read_many"]["inputSchema"]["required"]), {"queries"}
+        )
         # aggregate_records requires model + groupby.
         self.assertEqual(
             set(tools["aggregate_records"]["inputSchema"]["required"]),
@@ -574,6 +580,95 @@ class TestMcpReadTools(common.HttpCase):
         self.assertNotIn("Items:", text)
         self.assertNotIn("SecretTagLeak", text)
         self.assertIn("not enabled for MCP", text)
+
+    # ------------------------------------------------------------------
+    # search_read_many -- several independent queries in one call
+    # ------------------------------------------------------------------
+    def test_search_read_many_returns_one_block_per_query(self):
+        """Each query gets its own formatted block and structured entry."""
+        result = self._call_tool(
+            "search_read_many",
+            {
+                "queries": [
+                    {
+                        "key": "first",
+                        "model": "res.partner",
+                        "fields": ["id", "name"],
+                        "limit": 1,
+                        "order": "id asc",
+                    },
+                    {
+                        "key": "named",
+                        "model": "res.partner",
+                        "domain": [["name", "ilike", "Imaged Partner"]],
+                        "fields": ["id", "name"],
+                        "limit": 5,
+                    },
+                ]
+            },
+        )
+        self.assertFalse(result["isError"], msg=result)
+
+        structured = result["structuredContent"]
+        self.assertEqual(set(structured["results"]), {"first", "named"})
+        self.assertNotIn("errors", structured)
+        self.assertEqual(structured["results"]["first"]["model"], "res.partner")
+        self.assertEqual(structured["results"]["first"]["offset"], 0)
+        self.assertLessEqual(len(structured["results"]["first"]["records"]), 1)
+        self.assertTrue(structured["results"]["named"]["records"])
+        self.assertGreaterEqual(structured["results"]["named"]["total"], 1)
+
+        text = result["content"][0]["text"]
+        self.assertIn("first (res.partner)", text)
+        self.assertIn("named (res.partner)", text)
+
+    def test_search_read_many_isolates_failing_query(self):
+        """A bad query reports under its key; the others still return."""
+        result = self._call_tool(
+            "search_read_many",
+            {
+                "queries": [
+                    {"key": "bad", "model": "res.users"},
+                    {
+                        "key": "ok",
+                        "model": "res.partner",
+                        "fields": ["id"],
+                        "limit": 1,
+                    },
+                ]
+            },
+        )
+        self.assertFalse(result["isError"], msg=result)
+        structured = result["structuredContent"]
+        self.assertIn("ok", structured["results"])
+        self.assertIn("bad", structured["errors"])
+        self.assertIn("not enabled", structured["errors"]["bad"].lower())
+        text = result["content"][0]["text"]
+        self.assertIn("ERROR", text)
+        self.assertNotIn("Traceback", text)
+
+    def test_search_read_many_rejects_too_many_queries(self):
+        """More than MAX_BATCH_QUERIES is refused before any query runs."""
+        result = self._call_tool(
+            "search_read_many",
+            {"queries": [{"model": "res.partner"}] * (MAX_BATCH_QUERIES + 1)},
+        )
+        self.assertTrue(result["isError"])
+        self.assertIn("Too many queries", result["content"][0]["text"])
+
+    def test_search_read_many_rejects_duplicate_keys(self):
+        """Duplicate keys are rejected (their result blocks would collide)."""
+        result = self._call_tool(
+            "search_read_many",
+            {
+                "queries": [
+                    {"key": "dup", "model": "res.partner"},
+                    {"key": "dup", "model": "res.partner"},
+                ]
+            },
+        )
+        self.assertTrue(result["isError"])
+        self.assertIn("Duplicate query key", result["content"][0]["text"])
 
     # ------------------------------------------------------------------
     # get_fields -- field-definition discovery
